@@ -218,3 +218,5 @@ sûr : sans effet si inutilisés, corrige un défaut visuel sinon).
 - Les tests de bout en bout de chaque phase utilisent un faux `Dexie`
   (fidèle au schéma réel `"++id, ..."` depuis la Phase 8) plutôt qu'une
   vraie IndexedDB, faute de navigateur disponible dans cet environnement.
+
+  # Test de mise à jour Git
