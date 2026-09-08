@@ -1,0 +1,8 @@
+{
+  "name": "pwa-standalone-build-tools",
+  "private": true,
+  "description": "Outillage de build pour pwa-standalone (bundling ESM du moteur static/src/ en un seul fichier, à l'image du bundler interne d'Odoo 17).",
+  "devDependencies": {
+    "esbuild": "^0.24.0"
+  }
+}

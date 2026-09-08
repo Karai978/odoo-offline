@@ -1,0 +1,190 @@
+/* ==========================================================================
+   Dashboard (home_menu) — scopé sous #action-container.dashboard-body
+   pour ne jamais entrer en conflit avec web.assets_web.min.css (navbar),
+   quel que soit l'ordre de chargement des deux feuilles de style.
+   ========================================================================== */
+
+/* ==========================================================================
+   1. CONTENEUR CENTRAL ET RECHERCHE
+   ========================================================================== */
+#action-container.dashboard-body .dashboard-container {
+    max-width: 1000px;
+    margin: 0 auto;
+    padding: 40px 20px 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
+}
+
+#action-container.dashboard-body .search-box {
+    display: flex;
+    align-items: center;
+    background: white;
+    border: 1px solid #dcdde1;
+    border-radius: 30px;
+    padding: 10px 20px;
+    width: 100%;
+    max-width: 600px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+    margin-bottom: 40px;
+}
+
+#action-container.dashboard-body .search-icon {
+    color: #a4b0be;
+    margin-right: 10px;
+}
+
+#action-container.dashboard-body .search-box input {
+    border: none;
+    outline: none;
+    width: 100%;
+    font-size: 14px;
+    color: #2f3542;
+}
+
+#action-container.dashboard-body .search-box input::placeholder {
+    color: #a4b0be;
+}
+
+/* ==========================================================================
+   2. GRILLE ET CARTES DE MODULES (Responsive & Propre)
+   ========================================================================== */
+#action-container.dashboard-body .modules-grid {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 25px;
+    width: 100%;
+    max-width: 850px;
+    margin-top: 20px;
+}
+
+@media (min-width: 900px) {
+    #action-container.dashboard-body .modules-grid {
+        display: grid;
+        grid-template-columns: repeat(7, 1fr);
+        justify-items: center;
+    }
+}
+
+#action-container.dashboard-body .module-card {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    cursor: pointer;
+    transition: transform 0.2s ease;
+    width: 90px;
+}
+
+#action-container.dashboard-body .module-card:hover {
+    transform: translateY(-3px);
+}
+
+#action-container.dashboard-body .icon-wrapper {
+    background-color: white;
+    border-radius: 12px;
+    width: 75px;
+    height: 75px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.08);
+    margin-bottom: 10px;
+    border: 1px solid #f1f2f6;
+}
+
+#action-container.dashboard-body .icon-wrapper img {
+    width: 45px;
+    height: 45px;
+    object-fit: contain;
+}
+
+#action-container.dashboard-body .module-card p {
+    font-size: 12px;
+    color: #57606f;
+    font-weight: 500;
+    max-width: 90px;
+    line-height: 1.3;
+}
+
+/* ==========================================================================
+   3. ETATS DES MODULES, ACTIONS & SYNCHRONISATION
+   ========================================================================== */
+#action-container.dashboard-body .refresh-btn {
+    margin: 12px 0 4px;
+    padding: 8px 14px;
+    background: #1F3864;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.85em;
+    transition: background 0.2s ease, opacity 0.2s ease;
+}
+
+#action-container.dashboard-body .refresh-btn:hover:not(:disabled) {
+    background: #152644;
+}
+
+#action-container.dashboard-body .refresh-btn:disabled {
+    opacity: 0.6;
+    cursor: default;
+}
+
+#action-container.dashboard-body .sync-status {
+    font-size: 0.8em;
+    color: #666;
+    margin-bottom: 12px;
+    min-height: 1.2em;
+}
+
+#action-container.dashboard-body .module-badge {
+    display: block;
+    font-size: 0.65em;
+    margin-top: 4px;
+    color: #888;
+}
+
+#action-container.dashboard-body .module-card.ready .module-badge {
+    color: #27ae60;
+    font-weight: bold;
+}
+
+#action-container.dashboard-body .module-card.installed-only {
+    opacity: 0.7;
+}
+
+#action-container.dashboard-body .module-card.installed-only .module-badge {
+    color: #d68910;
+}
+
+#action-container.dashboard-body .download-btn {
+    margin-top: 6px;
+    font-size: 0.75em;
+    padding: 4px 8px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    background: white;
+    cursor: pointer;
+    transition: background 0.2s ease;
+}
+
+#action-container.dashboard-body .download-btn:hover:not(:disabled) {
+    background: #f0f0f0;
+}
+
+#action-container.dashboard-body .download-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.local-icon {
+    width: 18px;
+    height: 18px;
+    object-fit: contain;
+    vertical-align: middle;
+    display: inline-block;
+}

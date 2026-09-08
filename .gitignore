@@ -1,0 +1,13 @@
+# Dépendances Node.js / esbuild
+node_modules/
+**/node_modules/
+
+# Fichiers de build générés automatiquement
+static/src/bundles/
+*.bundle.js
+*.bundle.js.map
+
+# Fichiers système et IDE
+.DS_Store
+.vscode/
+*.log
