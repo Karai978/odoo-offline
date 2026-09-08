@@ -1,27 +1,3 @@
-# Architecture — SPA Odoo-like, modules ES, offline-first
-
-Ce document décrit l'état final du moteur après la migration complète en
-9 phases : d'une app multi-page (HTML statique + `<script>` globaux +
-iframe) vers une SPA (Single Page Application) fidèle à l'architecture
-réelle d'Odoo 17 (`registry`, `ActionService`, vues génériques, modules
-ES natifs), bundlée par `esbuild`.
-
-## Principe général
-
-- **Un seul point d'entrée HTML** : `index.html`. Plus de
-  `login.html`/`dashboard.html`/`generic-form.html`/`app-shell.html`.
-- **Un seul point d'entrée JS** : `static/src/main.js`, qui importe tout
-  le reste (modules ES natifs, `import`/`export`).
-- **Un seul artefact livré** : `static/src/bundles/app.bundle.js`,
-  généré par `esbuild` (voir `scripts/build-bundle.sh`) — c'est lui que
-  `index.html` charge, jamais les 59 fichiers sources un par un.
-- **Navigation** : `history.pushState`/`popstate` (bouton précédent du
-  navigateur et liens profonds fonctionnels), gérée par
-  `core/browser/router.js` + `webclient/actions/action_service.js`.
-- **Offline-first** : persistance locale via IndexedDB (Dexie),
-  `core/orm/*`, avec queue de synchronisation
-  (`core/network/rpc_service.js`) rejouée à la reconnexion.
-
 ## Arborescence finale (`static/src/`, 59 fichiers)
 
 ```text
@@ -219,4 +195,57 @@ sûr : sans effet si inutilisés, corrige un défaut visuel sinon).
   (fidèle au schéma réel `"++id, ..."` depuis la Phase 8) plutôt qu'une
   vraie IndexedDB, faute de navigateur disponible dans cet environnement.
 
-  # Test de mise à jour Git
+  # GITHUB
+  C'est un excellent moyen de pratiquer ! Voici un exercice pas à pas pour modifier votre fichier `ARCHITECTURE.md` et envoyer la modification sur GitHub.
+
+---
+
+1. **1. Modifier le fichier dans VS Code:**
+Ouvrez le fichier `ARCHITECTURE.md` dans votre éditeur et ajoutez une ligne à la fin (par exemple : `# Test de mise à jour Git`), puis enregistrez le fichier (`Ctrl + S`).
+
+
+2. **2. Observer la détection de Git:**
+Dans votre terminal, tapez la commande de suivi :
+
+```bash
+git status
+
+```
+
+*Pour vérifier :* Git affiche le fichier `ARCHITECTURE.md` **en rouge**, indiquant qu'il a détecté la modification.
+
+
+3. **3. Indexer le fichier (git add):**
+Préparez la modification pour le commit :
+
+```bash
+git add ARCHITECTURE.md
+
+```
+
+*Pour vérifier :* Exécutez à nouveau `git status`. Le nom du fichier apparaît désormais **en vert**.
+
+
+4. **4. Enregistrer la modification (git commit):**
+Validez votre changement localement avec un message descriptif :
+
+```bash
+git commit -m "docs: mise à jour du fichier ARCHITECTURE.md"
+
+```
+
+*Pour vérifier :* Tapez `git log -1` pour voir votre nouveau commit enregistré dans l'historique local.
+
+
+5. **5. Publier la modification (git push):**
+Envoyez le commit vers votre dépôt GitHub privé :
+
+```bash
+git push
+
+```
+
+*Pour vérifier :* Rendez-vous sur la page GitHub de votre dépôt `odoo-offline` et ouvrez le fichier `ARCHITECTURE.md` pour constater la mise à jour en ligne !
+
+
+---
