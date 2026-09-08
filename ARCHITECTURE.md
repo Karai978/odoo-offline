@@ -249,3 +249,7 @@ git push
 
 
 ---
+
+git add .
+git commit -m "Explication de vos modifications"
+git push
