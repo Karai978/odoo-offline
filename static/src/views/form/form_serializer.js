@@ -90,8 +90,15 @@ export function getElementValue(el, info) {
         ? (rawVal.startsWith("tmp:") ? rawVal : parseInt(rawVal, 10))
         : false;
     }
-    case "many2many":
-      return false;
+    case "many2many": {
+      const hidden = el.querySelector('input[type="hidden"]');
+      if (!hidden || !hidden.value) return [];
+      try {
+        return JSON.parse(hidden.value);
+      } catch (e) {
+        return [];
+      }
+    }
     case "date":
       return el.value || false;
     default:
