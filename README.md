@@ -53,12 +53,13 @@ docker compose exec odoo sh -c "echo \"self.env['ir.module.module'].search([('na
 
 docker compose exec odoo sh -c "echo \"self.env['ir.module.module'].search([('name', '=', 'offline_vlr')]).button_immediate_uninstall()\" | odoo shell -d demo_db --db_host=db --db_port=5432 --db_user=odoo --db_password='978@308.com' --stop-after-init"
 
-mise à jour
+Installer
 docker compose exec odoo odoo -d demo_db --db_host=db --db_port=5432 --db_user=odoo --db_password='978@308.com' -i offline_sync --stop-after-init
 
 docker compose exec odoo odoo -d demo_db --db_host=db --db_port=5432 --db_user=odoo --db_password='978@308.com' -u offline_vlr --stop-after-init
 
-docker compose exec odoo odoo -d demo_db --db_host=db --db_port=5432 --db_user=odoo --db_password='978@308.com' -u my_offline_addon --stop-after-init
+Mise à jour
+docker compose exec odoo odoo -d demo_db --db_host=db --db_port=5432 --db_user=odoo --db_password='978@308.com' -u offline_sync --stop-after-init
 
 my_offline_addon : claude
 my_offline_engine : chatGPT
