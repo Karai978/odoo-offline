@@ -15,12 +15,13 @@ export function translateOdooExprToJs(expr) {
   js = js.replace(/\bNone\b/g, "false");
 
   // "X not in [..]" / "X not in (..)" -> "![...].includes(X)"
-  js = js.replace(/(\w+)\s+not\s+in\s+(\[[^\]]*\]|\([^)]*\))/g, (_, field, list) => {
+  // X peut être un identifiant (nom de champ) OU un littéral string
+  js = js.replace(/('[^']*'|"[^"]*"|\w+)\s+not\s+in\s+(\[[^\]]*\]|\([^)]*\))/g, (_, field, list) => {
     const arr = list.replace(/^\(/, "[").replace(/\)$/, "]");
     return `!(${arr}).includes(${field})`;
   });
   // "X in [..]" / "X in (..)" -> "[...].includes(X)"
-  js = js.replace(/(\w+)\s+in\s+(\[[^\]]*\]|\([^)]*\))/g, (_, field, list) => {
+  js = js.replace(/('[^']*'|"[^"]*"|\w+)\s+in\s+(\[[^\]]*\]|\([^)]*\))/g, (_, field, list) => {
     const arr = list.replace(/^\(/, "[").replace(/\)$/, "]");
     return `(${arr}).includes(${field})`;
   });
