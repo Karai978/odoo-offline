@@ -1,93 +1,120 @@
-cat > README.md << 'EOF'
 # Offline Sync — PWA Standalone
-
-Application web progressive (PWA) indépendante, synchronisée avec un module Odoo
+Application web progressive (PWA) indépendante nommé odoo-offline, synchronisée avec un module Odoo offline_sync
 via une API JSON authentifiée par clé API.
 
-## Structure
+## Arborescence finale
 
-- `index.html` / `login.html` — pages de l'application
-- `js/` — logique applicative (config, base locale, synchronisation, UI)
-- `lib/` — dépendances tierces (Dexie.js pour IndexedDB)
-- `css/` — styles
-- `assets/` — icônes PWA
-- `manifest.json` — manifeste PWA (nom, icônes, mode d'affichage)
-- `service-worker.js` — cache offline et interception réseau
+main.js : Point d'entrée unique
+registry.js : Annuaire (catégories, séquence)
+assets.js : Charge web.assets_web.min.css
+name_service.js : Cache id -> display_name (many2one)
+user.js : Droits/groupes utilisateur
+browser/
+router.js : pushState/popstate + hash
+session.js : session locale + config serveur
+service_worker.js : Enregistrement du service worker
+bus/
+bus_service.js : EventBus interne (remplace postMessage)
+network/
+rpc_service.js : Queue de sync offline-first + conflits
+py_js/
+py_utils.js : Évaluateur d'expressions Python-like
+orm/
+orm_service.js : Schéma IndexedDB (Dexie)
+list_cache.js : Cache listes + dashboard achats
+record_cache.js : Cache d'un enregistrement complet
+catalog_cache.js : Cache catalogue produits
+webclient/
+webclient.js : Shell racine : navbar + #action-container
+login.js : Contrôleur "login"
+offline_prefetch_service.js : Téléchargement complet d'une app
+menus/
+menu_service.js : Cache des apps installées
+navbar/
+navbar.js : Menu horizontal (apps -> doAction)
+sync_status_panel.js : Badge + panneau de synchronisation
+connectivity_indicator.js : Pastille en ligne/hors ligne
+home_menu/
+home_menu.js : Action "home_menu" (grille des apps)
+actions/
+action_service.js : Routeur SPA (doAction/restoreState)
+purchase_dashboard.js : Bandeau KPI Achats
+views/
+view.js : Dispatch générique (list_view/form_view)
+view_service.js : Charge/cache le manifest module
+relational_model/
+relational_model.js : Réévaluation live readonly/required
+dynamic_field_attrs.js : Application des attrs dynamiques
+compute_engine.js : Calcul du total one2many + devise
+form/
+form_renderer.js : Squelette o_form_view + chatter
+form_compiler.js : Compilation récursive de l'arch XML
+form_controller.js : Cycle load/save + queue de sync
+form_serializer.js : Collecte des valeurs du DOM
+group_layout.js : Grille o_inner_group
+notebook_and_header.js : Onglets, statusbar, button_box
+list/
+list_controller.js : Pagination, recherche, dashboard
+list_renderer.js : Tableau, tri, colonnes optionnelles
+list_renderer_utils.js : Formatage cellules + badges
+list_column_prefs.js : Préférences colonnes (localStorage)
+kanban/
+kanban_renderer.js : Mini moteur QWeb pour templates kanban
+fields/
+field.js : Dispatcher (SUPPORTED_FIELD_WIDGETS)
+char_field.js
+text_field.js
+integer_field.js
+float_field.js
+boolean_field.js
+selection_field.js
+date_field.js
+datetime_field.js
+monetary_field.js
+many2one_field.js : Autocomplete + création à la volée
+many2many_tags_field.js
+x2many_field.js : Tableau one2many + catalogue produits
+product_catalog.js
 
-## Lancer en local
+## Mécanisme SPA
 
-```bash
-python3 -m http.server 8080
-```
+1. # main.js 
+   démarre les services (`registry.category("services")`)
+   appelle `loadOdooAssets()` (CSS natif Odoo) et
+   `registerServiceWorker()`, puis monte `webclient.js`.
 
-## Configuration
+2. # webclient.js
+   construit le squelette (navbar Odoo, masquée sauf
+   pour `list_view`/`form_view`), crée l'`ActionService`, et restaure l'état depuis l'URL (`router.current`) — deep link ou `home_menu` par défaut.
 
-Modifier `js/config.js` pour pointer vers l'URL de l'instance Odoo cible.
-L'authentification se fait via email/mot de passe Odoo (page de login),
-qui récupère automatiquement la clé API associée à l'utilisateur.
+3. # action_service.js
+   c' est LE routeur : `doAction(descripteur)`
+   démonte le contrôleur courant, en monte un nouveau dans
+   `#action-container`, gère la pile de breadcrumb et synchronise l'URL via `router.pushState`/`replaceState`. Garde d'authentification intégrée (redirige vers `"login"` si pas de clé API).
 
-controllers/
-├── __init__.py
-├── common.py               ← Mixin : constantes + _cors_response + _authenticate_api_key + _json_safe
-├── auth_controller.py       ← login
-├── dashboard_controller.py  ← dashboard_info, app_info
-├── metadata_controller.py   ← module_manifest, installed_apps, model_fields, security_info,
-│                                _guess_main_model, _get_icon_base64, _get_synced_models
-├── database_controller.py   ← reference_records, list_records, read_record
-└── sync_controller.py       ← push_actions (le vrai Sync Engine, maintenant tout petit)
+4. # views/view.js 
+   dispatche vers `list_controller.js` ou
+   `form_controller.js` selon la présence d'un `id`/`isNew`.
 
-PWA (IndexedDB, table sync_queue locale)
-        │
-        │  synchronisation (push_actions dans sync_controller.py)
-        ▼
-Odoo (sync.queue, table PostgreSQL) ← C'EST CE FICHIER
-        │
-        │  apply_action()
-        ▼
-Le vrai enregistrement Odoo (res.partner, sale.order, stock.quant...)
+5. # Communication interne : 
+   `core/bus/bus_service.js` (EventBus)
 
-docker compose exec odoo odoo shell -d demo_db --db_host=db --db_port=5432 --db_user=odoo --db_password='978@308.com'
-
-Désinstaller un module
-docker compose exec odoo sh -c "echo \"self.env['ir.module.module'].search([('name', '=', 'odoo_offline_engine')]).button_immediate_uninstall()\" | odoo shell -d demo_db --db_host=db --db_port=5432 --db_user=odoo --db_password='978@308.com' --stop-after-init"
-
-docker compose exec odoo sh -c "echo \"self.env['ir.module.module'].search([('name', '=', 'offline_vlr')]).button_immediate_uninstall()\" | odoo shell -d demo_db --db_host=db --db_port=5432 --db_user=odoo --db_password='978@308.com' --stop-after-init"
-
-Installer
+# Installer
 docker compose exec odoo odoo -d demo_db --db_host=db --db_port=5432 --db_user=odoo --db_password='978@308.com' -i offline_sync --stop-after-init
 
-docker compose exec odoo odoo -d demo_db --db_host=db --db_port=5432 --db_user=odoo --db_password='978@308.com' -u offline_vlr --stop-after-init
-
-Mise à jour
+# Mise à jour
 docker compose exec odoo odoo -d demo_db --db_host=db --db_port=5432 --db_user=odoo --db_password='978@308.com' -u offline_sync --stop-after-init
 
-my_offline_addon : claude
-my_offline_engine : chatGPT
-db.sync_queue.toArray().then(rows => console.log(rows));
+# Désinstaller un module
+docker compose exec odoo sh -c "echo \"self.env['ir.module.module'].search([('name', '=', 'odoo_offline_engine')]).button_immediate_uninstall()\" | odoo shell -d demo_db --db_host=db --db_port=5432 --db_user=odoo --db_password='978@308.com' --stop-after-init"
 
-docker compose exec odoo sh -c 'grep -rl "OuterGroup" $(find / -type d -path "*addons/web/static/src" 2>/dev/null | head -1)'
-
-docker compose exec odoo -u offline_sync --stop-after-init
-
-SHELL ODOO :
+# SHELL ODOO :
 docker compose exec odoo odoo shell -d demo_db --db_host=db --db_port=5432 --db_user=odoo --db_password='978@308.com'
 
-4. Intégrer ça dans ta méthode de travail habituelle
-
-À chaque fois que tu modifies un des fichiers JS listés dans FILES, il faut relancer ./scripts/build-bundle.sh avant de recharger la page — sinon dashboard.html chargera un bundle obsolète. Ça s'ajoute à ton ordre existant :
-
-sauvegarde fichier(s) → régénérer le bundle 
-(./scripts/build-bundle.sh) 
-→ restart Docker si backend touché 
-→ Unregister SW + vider Cache/Dexie si nécessaire → recharger
-
+# régénérer le bundle 
 bash scripts/build-bundle.sh
 
-docker compose exec odoo sh -c 'tar -czf /tmp/odoo_web.tar.gz -C /usr/lib/python3/dist-packages/odoo/addons web' && docker cp $(docker compose ps -q odoo):/tmp/odoo_web.tar.gz ~/Documents/
-
-docker compose exec odoo rm -f /tmp/odoo_web.tar.gz
-
-```bash
-cd scripts && npm install   # installe esbuild (une seule fois)
-bash scripts/build-bundle.sh
-```
+# GITHUB
+git add .
+git commit -m "Explication de vos modifications"
+git push
