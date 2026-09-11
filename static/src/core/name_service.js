@@ -5,7 +5,7 @@
  *
 */
 
-import { db } from "./orm/orm_service.js";
+import { db } from "./orm_service.js";
 
 /**
  * Downloads all reference records for a model

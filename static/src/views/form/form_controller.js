@@ -9,10 +9,10 @@ import { bus } from "../../core/bus/bus_service.js";
 import { CONFIG, getApiKey } from "../../core/browser/session.js";
 import { getModuleManifest, resolveModelViews } from "../view_service.js";
 import { getReferenceRecordsSmart } from "../../core/name_service.js";
-import { getRecordSmart } from "../../core/orm/record_cache.js";
-import { getSecurityInfo } from "../../core/user.js";
+import { getRecordSmart } from "../../core/record_cache.js";
+import { getSecurityInfo } from "../../core/user_service.js";
 import { renderFormView } from "./form_renderer.js";
-import { attachLiveBusinessRules } from "../relational_model/relational_model.js";
+import { attachLiveBusinessRules } from "../../model/relational_model/relational_model.js";
 import { collectFormData } from "./form_serializer.js";
 import {
   queueAction,
@@ -21,7 +21,7 @@ import {
   amendPendingCreate,
   getSyncQueueEntry,
 } from "../../core/network/rpc_service.js";
-import { buildControlPanel } from "../control_panel.js";
+import { buildControlPanel } from "../../search/control_panel/control_panel.js";
 
 /**
  * Mounts a form into the container and returns a cleanup
@@ -184,7 +184,7 @@ export async function mountFormController(container, params, env) {
    * - The button's "context" attribute (e.g. context="{'validate_analytic': True}")
    *   is not evaluated/forwarded yet — args/kwargs are sent empty.
    * - type="action" buttons are out of scope for this iteration
-   *   (see notebook_and_header.js, unchanged behavior for them).
+   *   (see status_bar_buttons/status_bar_buttons.js, unchanged behavior for them).
    */
   async function onObjectButtonClick(methodName) {
     if (!currentRecordId) {

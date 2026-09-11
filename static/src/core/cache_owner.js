@@ -4,7 +4,7 @@
  * IndexedDB left behind by a previous user on the same device
  */
 
-import { db } from "./orm/orm_service.js";
+import { db } from "./orm_service.js";
 
 const OWNER_KEY = "owner";
 

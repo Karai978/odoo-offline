@@ -8,7 +8,7 @@
 
 import { bus } from "../../core/bus/bus_service.js";
 import { getCachedConflicts } from "../../core/network/rpc_service.js";
-import { createDropdown } from "../../core/browser/dropdown_menu.js";
+import { createDropdown } from "../../core/dropdown/dropdown.js";
 
 function formatFieldLabel(fieldName) {
   const match = fieldName.match(/^(.+)\[(\d+)\]$/);

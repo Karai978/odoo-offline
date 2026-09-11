@@ -5,7 +5,7 @@
  * grid) and navbar.js (quick selector).
  */
 
-import { db } from "../../core/orm/orm_service.js";
+import { db } from "../../core/orm_service.js";
 
 export async function saveCachedApps(apps) {
   await db.transaction("rw", db.installed_apps, async () => {

@@ -5,7 +5,7 @@
  * (view XML architecture, field definitions, menus).
  */
 
-import { db } from "../core/orm/orm_service.js";
+import { db } from "../core/orm_service.js";
 
 export async function fetchAndStoreModuleManifest(moduleName, apiKey, baseUrl) {
   const response = await fetch(

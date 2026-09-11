@@ -4,7 +4,7 @@
 
 import { registry } from "../core/registry.js";
 import { CONFIG, saveSession } from "../core/browser/session.js";
-import { fetchAndStoreSecurityInfo } from "../core/user.js";
+import { fetchAndStoreSecurityInfo } from "../core/user_service.js";
 import { ensureCacheOwnership } from "../core/cache_owner.js"; 
 import { loadScopedCss, unloadScopedCss } from "../core/assets.js";
 

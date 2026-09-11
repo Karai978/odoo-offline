@@ -2,7 +2,7 @@
  * webclient/navbar/sync_status_panel.js
  */
 import { bus } from "../../core/bus/bus_service.js";
-import { createDropdown } from "../../core/browser/dropdown_menu.js";
+import { createDropdown } from "../../core/dropdown/dropdown.js";
 import {
   getSyncQueueSummary,
   getSyncErrorEntries,

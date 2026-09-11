@@ -9,9 +9,9 @@
  */
 
 import { resolveModelDisplayInfo } from "../core/model_display.js";
-import { getCachedRecord } from "../core/orm/record_cache.js";
+import { getCachedRecord } from "../core/record_cache.js";
 import { getReferenceRecordsSmart } from "../core/name_service.js";
-import { db } from "../core/orm/orm_service.js";
+import { db } from "../core/orm_service.js";
 import { registry } from "../core/registry.js";
 import { getApiKey, CONFIG } from "../core/browser/session.js";
 import { bus } from "../core/bus/bus_service.js";

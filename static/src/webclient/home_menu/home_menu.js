@@ -10,7 +10,7 @@ import { registry } from "../../core/registry.js";
 import { bus } from "../../core/bus/bus_service.js";
 import { getModuleManifest } from "../../views/view_service.js";
 import { resolveNaturalLanding } from "../navbar/navbar.js";
-import { saveCachedProfile, getCachedProfile } from "../../core/user_profile.js";
+import { saveCachedProfile, getCachedProfile } from "../../core/user_service.js";
 
 const CUSTOM_IMPLEMENTATIONS = {};
 

@@ -9,7 +9,7 @@ import { renderChildren } from "./form_compiler.js";
 
 /**
  * NEW param: onObjectButtonClick, forwarded unchanged to renderChildren
- * (see form_compiler.js / notebook_and_header.js).
+ * (see form_compiler.js / core/notebook/notebook.js / status_bar_buttons/status_bar_buttons.js / button_box/button_box.js).
  */
 export function renderFormView(archXml, fieldsInfo, initialValues = {}, securityContext = null, onObjectButtonClick = null) {
   const parser = new DOMParser();

@@ -3,7 +3,7 @@
  */
 
 import "./conflict_detail.js";
-import { router } from "../core/browser/router.js";
+import { router } from "../core/browser/router_service.js";
 import { bus } from "../core/bus/bus_service.js";
 import { CONFIG, getApiKey } from "../core/browser/session.js";
 import { createActionService } from "./actions/action_service.js";
@@ -12,7 +12,7 @@ import { buildMenuTree, findFirstModel, renderHorizontalMenu, resolveNaturalLand
 import { mountSyncStatusPanel } from "./navbar/sync_status_panel.js";
 import { mountConnectivityIndicator } from "./navbar/connectivity_indicator.js";
 import { mountConflictPanel } from "./navbar/conflict_panel.js"; 
-import { mountUserMenu } from "./navbar/user_menu.js";
+import { mountUserMenu } from "./user_menu/user_menu.js";
 import { loadOdooAssets, unloadOdooAssets } from "../core/assets.js";
 
 const NAVBAR_TEMPLATE = `

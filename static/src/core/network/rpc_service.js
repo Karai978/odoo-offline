@@ -6,7 +6,7 @@
 */
 
 import { CONFIG, getApiKey } from "../browser/session.js";
-import { db } from "../orm/orm_service.js";
+import { db } from "../orm_service.js";
 
 /**
  * Generates a Universally Unique Identifier (UUID) on the client side 

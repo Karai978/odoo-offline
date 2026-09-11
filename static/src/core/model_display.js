@@ -7,7 +7,7 @@
  * recombinées ici pour l'affichage du panneau de conflits.
  */
 
-import { db } from "./orm/orm_service.js";
+import { db } from "./orm_service.js";
 import { getCachedApps } from "../webclient/menus/menu_service.js";
 import { matchesDomain } from "./py_js/py_utils.js";
 

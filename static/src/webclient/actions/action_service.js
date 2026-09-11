@@ -3,7 +3,7 @@
  */
 
 import { registry } from "../../core/registry.js";
-import { router } from "../../core/browser/router.js";
+import { router } from "../../core/browser/router_service.js";
 import { bus } from "../../core/bus/bus_service.js";
 import { getApiKey } from "../../core/browser/session.js";
 

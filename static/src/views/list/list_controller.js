@@ -7,12 +7,12 @@
 
 import { CONFIG, getApiKey, getUserId } from "../../core/browser/session.js";
 import { getModuleManifest, resolveModelViews } from "../view_service.js";
-import { getListRecordsSmart, getPurchaseDashboardSmart } from "../../core/orm/list_cache.js";
+import { getListRecordsSmart, getPurchaseDashboardSmart } from "../../core/list_cache.js";
 import { formatCellValue } from "./list_renderer_utils.js";
 import { renderListView } from "./list_renderer.js";
 import { renderKanbanView } from "../kanban/kanban_renderer.js";
-import { renderPurchaseDashboard, buildPurchaseDashboardDomain } from "../../webclient/actions/purchase_dashboard.js";
-import { buildControlPanel, renderViewSwitcherButtons } from "../control_panel.js";
+import { renderPurchaseDashboard, buildPurchaseDashboardDomain } from "../purchase_dashboard.js";
+import { buildControlPanel, renderViewSwitcherButtons } from "../../search/control_panel/control_panel.js";
 
 const PAGE_SIZE = 20;
 

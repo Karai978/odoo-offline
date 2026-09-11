@@ -3,10 +3,10 @@
  */
 
 import { fetchAndStoreModuleManifest } from "../views/view_service.js";
-import { fetchAndStoreListRecords } from "../core/orm/list_cache.js";
-import { fetchAndStoreRecord } from "../core/orm/record_cache.js";
+import { fetchAndStoreListRecords } from "../core/list_cache.js";
+import { fetchAndStoreRecord } from "../core/record_cache.js";
 import { fetchAndStoreReferenceRecords } from "../core/name_service.js";
-import { fetchAndStoreSecurityInfo } from "../core/user.js";
+import { fetchAndStoreSecurityInfo } from "../core/user_service.js";
 
 export async function downloadFullApp(moduleName, apiKey, baseUrl, onProgress = () => {}) {
   onProgress(`Téléchargement du manifest de ${moduleName}...`);
