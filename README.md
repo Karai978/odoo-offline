@@ -2,7 +2,7 @@
 Application web progressive (PWA) indépendante nommé odoo-offline, synchronisée avec un module Odoo offline_sync
 via une API JSON authentifiée par clé API.
 
-## Arborescence finale
+# Arborescence finale
 
 main.js : Point d'entrée unique
 registry.js : Annuaire (catégories, séquence)
@@ -76,45 +76,47 @@ many2many_tags_field.js
 x2many_field.js : Tableau one2many + catalogue produits
 product_catalog.js
 
-## Mécanisme SPA
+# Mécanisme SPA
 
-1. # main.js 
+1. ## main.js 
    démarre les services (`registry.category("services")`)
    appelle `loadOdooAssets()` (CSS natif Odoo) et
    `registerServiceWorker()`, puis monte `webclient.js`.
 
-2. # webclient.js
+2. ## webclient.js
    construit le squelette (navbar Odoo, masquée sauf
    pour `list_view`/`form_view`), crée l'`ActionService`, et restaure l'état depuis l'URL (`router.current`) — deep link ou `home_menu` par défaut.
 
-3. # action_service.js
+3. ## action_service.js
    c' est LE routeur : `doAction(descripteur)`
    démonte le contrôleur courant, en monte un nouveau dans
    `#action-container`, gère la pile de breadcrumb et synchronise l'URL via `router.pushState`/`replaceState`. Garde d'authentification intégrée (redirige vers `"login"` si pas de clé API).
 
-4. # views/view.js 
+4. ## views/view.js 
    dispatche vers `list_controller.js` ou
    `form_controller.js` selon la présence d'un `id`/`isNew`.
 
-5. # Communication interne : 
+5. ## Communication interne : 
    `core/bus/bus_service.js` (EventBus)
 
-# Installer
+# Odoo
+
+## Installer
 docker compose exec odoo odoo -d demo_db --db_host=db --db_port=5432 --db_user=odoo --db_password='978@308.com' -i offline_sync --stop-after-init
 
-# Mise à jour
+## Mise à jour
 docker compose exec odoo odoo -d demo_db --db_host=db --db_port=5432 --db_user=odoo --db_password='978@308.com' -u offline_sync --stop-after-init
 
-# Désinstaller un module
+## Désinstaller un module
 docker compose exec odoo sh -c "echo \"self.env['ir.module.module'].search([('name', '=', 'odoo_offline_engine')]).button_immediate_uninstall()\" | odoo shell -d demo_db --db_host=db --db_port=5432 --db_user=odoo --db_password='978@308.com' --stop-after-init"
 
-# SHELL ODOO :
+## SHELL ODOO :
 docker compose exec odoo odoo shell -d demo_db --db_host=db --db_port=5432 --db_user=odoo --db_password='978@308.com'
 
-# régénérer le bundle 
+## régénérer le bundle 
 bash scripts/build-bundle.sh
 
-# GITHUB
+## GITHUB
 git add .
 git commit -m "Explication de vos modifications"
 git push
