@@ -127,3 +127,33 @@ db.version(10).stores({
   catalog_cache: "key, updated_at",
   cache_meta: "key",
 });
+
+// Version 11 : registre local des deltas ("ledger") produits par les
+// règles de calcul offline (voir model/rules_engine/), pour les agrégats
+// qui portent sur PLUSIEURS enregistrements (ex: qty_available d'un
+// stock.quant = somme de tous les stock.move qui le touchent).
+//
+// Champs :
+//   model       : modèle Odoo concerné (ex: "stock.quant")
+//   key         : identifiant de l'agrégat impacté, convention libre par
+//                 modèle (ex: pour stock.quant -> "<product_id>:<location_id>")
+//   delta_field : champ affecté (ex: "quantity")
+//   delta       : valeur numérique à ajouter (peut être négative)
+//   sync_uuid   : local_uuid de l'entrée sync_queue à l'origine de ce
+//                 delta -> permet de purger le ledger dès que cette
+//                 action précise est confirmée synchronisée
+//   created_at  : horodatage, pour debug/tri uniquement
+db.version(11).stores({
+  sync_queue: "++id, local_uuid, status, model_name, created_at",
+  security_info: "model, updated_at",
+  installed_apps: "technical_name",
+  reference_records: "[model+id], model",
+  module_manifests: "technical_name, updated_at",
+  list_cache: "model, updated_at",
+  record_cache: "[model+record_id], model",
+  dashboard_cache: "key, updated_at",
+  sync_conflicts: "local_uuid, status, model_name",
+  catalog_cache: "key, updated_at",
+  cache_meta: "key",
+  local_ledger: "++id, model, key, delta_field, sync_uuid, created_at",
+});
