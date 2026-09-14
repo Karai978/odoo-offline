@@ -120,3 +120,13 @@ bash scripts/build-bundle.sh
 git add .
 git commit -m "Explication de vos modifications"
 git push
+
+
+#### 1 - Récupérer l'état du serveur distant 
+git fetch origin
+
+#### 2 - Réinitialiser les fichiers suivis
+git reset --hard origin/main
+
+#### 3 - Effacer les nouveaux fichiers créés
+git clean -fd
