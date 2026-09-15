@@ -110,6 +110,8 @@ docker compose exec odoo odoo -d demo_db --db_host=db --db_port=5432 --db_user=o
 ## Désinstaller un module
 docker compose exec odoo sh -c "echo \"self.env['ir.module.module'].search([('name', '=', 'odoo_offline_engine')]).button_immediate_uninstall()\" | odoo shell -d demo_db --db_host=db --db_port=5432 --db_user=odoo --db_password='978@308.com' --stop-after-init"
 
+echo "env['ir.module.module'].search([('name', '=', 'offline_orm')]).button_immediate_uninstall(); env.cr.commit()" | docker compose exec -T odoo odoo shell -d demo_db --db_host=db --db_port=5432 --db_user=odoo --db_password='978@308.com' --no-http
+
 ## SHELL ODOO :
 docker compose exec odoo odoo shell -d demo_db --db_host=db --db_port=5432 --db_user=odoo --db_password='978@308.com'
 
