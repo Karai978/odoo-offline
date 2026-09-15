@@ -3,7 +3,7 @@
  */
 
 import { fetchAndStoreModuleManifest } from "../views/view_service.js";
-import { fetchAndStoreListRecords } from "../core/list_cache.js";
+import { fetchAndStoreListRecords, fetchAndStorePurchaseDashboard } from "../core/list_cache.js";
 import { fetchAndStoreRecord } from "../core/record_cache.js";
 import { fetchAndStoreReferenceRecords } from "../core/name_service.js";
 import { fetchAndStoreSecurityInfo } from "../core/user_service.js";
@@ -99,6 +99,24 @@ export async function downloadFullApp(moduleName, apiKey, baseUrl, onProgress = 
       await fetchAndStoreReferenceRecords(relModel, apiKey, baseUrl);
     } catch (err) {
       console.warn(`Impossible de télécharger les relations de ${relModel}:`, err);
+    }
+  }
+
+  // 4. Downloading the Purchase KPI banner (purchase.order only) — without
+  // this step, the banner is never cached and getPurchaseDashboardSmart()
+  // falls back to an empty cache offline, even after a full app download.
+  // Uses the exact same cache key (actionId) as list_controller.js's read.
+  if (modelActionIds["purchase.order"]) {
+    const purchaseActionIds = Array.from(modelActionIds["purchase.order"]);
+    let dashIndex = 0;
+    for (const actionId of purchaseActionIds) {
+      dashIndex++;
+      onProgress(`Tableau de bord achats ${dashIndex}/${purchaseActionIds.length}...`);
+      try {
+        await fetchAndStorePurchaseDashboard(apiKey, baseUrl, actionId);
+      } catch (err) {
+        console.warn(`Impossible de télécharger le tableau de bord achats pour l'action ${actionId}:`, err);
+      }
     }
   }
 

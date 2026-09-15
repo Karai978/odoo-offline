@@ -288,7 +288,13 @@ export function renderOne2manyField(name, info, node, initialValue, parentValues
    * current form is never lost).
    */
   async function openProductCatalog() {
-    const { productFields, qtyField } = detectCatalogFieldNames(subFields);
+    // On passe l'ensemble des colonnes réellement rendues : detectCatalogFieldNames
+    // choisit alors le bon champ quantité (ex: "product_qty" pour Achat) au lieu
+    // du premier candidat trouvé dans les métadonnées du modèle, qui pouvait ne
+    // correspondre à aucune cellule réellement affichée dans le tableau (cause
+    // du plantage "_cellRefs[qtyField].el" lors du retour du catalogue).
+    const renderedFieldSet = new Set(columns.map((c) => c.field));
+    const { productFields, qtyField } = detectCatalogFieldNames(subFields, renderedFieldSet);
     if (productFields.length === 0 || !qtyField || !productFields.includes("product_id")) {
       alert("Catalogue indisponible : champs produit/quantité non détectés pour ce modèle.");
       return;
@@ -333,7 +339,6 @@ export function renderOne2manyField(name, info, node, initialValue, parentValues
 
     wrapper.replaceChild(overlay, rendererDiv);
   }
-
   /**
    * Reads the CURRENT value of the Customer/Supplier field (partner_id) from
    * the current form, directly from the DOM—not from parentValues,

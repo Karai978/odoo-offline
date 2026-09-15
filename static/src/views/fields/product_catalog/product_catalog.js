@@ -12,9 +12,16 @@ const CATALOG_QTY_FIELD_CANDIDATES = ["product_uom_qty", "product_qty", "quantit
  * populate BOTH fields if they exist, each with the correct ID—ensuring
  * correctness regardless of the mode.
  */
-export function detectCatalogFieldNames(subFields) {
-  const productFields = CATALOG_PRODUCT_FIELD_CANDIDATES.filter((f) => subFields[f]);
-  const qtyField = CATALOG_QTY_FIELD_CANDIDATES.find((f) => subFields[f]) || null;
+export function detectCatalogFieldNames(subFields, renderedFields = null) {
+  // Si l'ensemble des colonnes réellement rendues est fourni, on exige
+  // STRICTEMENT que le champ soit aussi une colonne affichée (donc une
+  // entrée _cellRefs existera). Un champ présent dans subFields (métadonnées
+  // du modèle) mais absent des colonnes rendues n'a jamais de cellule DOM :
+  // l'utiliser plante plus tard dans applyCatalogSelection/addRow.
+  const isUsable = renderedFields ? (f) => renderedFields.has(f) : (f) => !!subFields[f];
+
+  const productFields = CATALOG_PRODUCT_FIELD_CANDIDATES.filter((f) => subFields[f] && isUsable(f));
+  const qtyField = CATALOG_QTY_FIELD_CANDIDATES.find((f) => subFields[f] && isUsable(f)) || null;
   return { productFields, qtyField };
 }
 
