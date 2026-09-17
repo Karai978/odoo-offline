@@ -7,6 +7,7 @@
 
 import { CONFIG, getApiKey } from "../browser/session.js";
 import { db } from "../orm_service.js";
+import { clearLedgerForSyncUuid } from "../local_ledger.js";
 
 /**
  * Generates a Universally Unique Identifier (UUID) on the client side 
@@ -126,6 +127,15 @@ export async function syncPendingActions() {
         requires_manual_action: result.requires_manual_action || false,
         pending_action: result.pending_action ? JSON.stringify(result.pending_action) : null,
       });
+
+      // Une fois l'action réellement confirmée synchronisée, les deltas
+      // locaux qu'elle a pu produire (voir rules/stock_rules.js ->
+      // form_controller.js) sont désormais reflétés par le serveur --
+      // on purge le ledger pour éviter de les additionner une seconde
+      // fois par-dessus la valeur serveur au prochain rafraîchissement.
+      if (mappedStatus === "sent") {
+        await clearLedgerForSyncUuid(localEntry.local_uuid);
+      }
     }
 
     return {

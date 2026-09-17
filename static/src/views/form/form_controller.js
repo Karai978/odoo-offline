@@ -13,7 +13,9 @@ import { getRecordSmart } from "../../core/record_cache.js";
 import { getSecurityInfo } from "../../core/user_service.js";
 import { renderFormView } from "./form_renderer.js";
 import { attachLiveBusinessRules } from "../../model/relational_model/relational_model.js";
-import { collectFormData } from "./form_serializer.js";
+import { runDocumentRules, validateDocument, computeStockEffects } from "../../model/rules_engine/rules_engine.js";
+import { collectFormData, buildDocumentGraph, applyDocumentGraphToDom, applyLineRowToDom } from "./form_serializer.js";
+import { addLedgerDelta, getAggregatedDeltasByField } from "../../core/local_ledger.js";
 import {
   queueAction,
   queueMethodCall,
@@ -45,6 +47,7 @@ export async function mountFormController(container, params, env) {
   let currentContainer = null;
   let currentFieldsInfo = null;
   let cleanupRules = () => {};
+  let rulesSyncTimer = null;
 
   // NEW — promoted to closure variables (previously: local to the try
   // block) so that saveRecord() can rebuild the form after a
@@ -120,6 +123,10 @@ export async function mountFormController(container, params, env) {
     formEl.dataset.model = model;
     container.insertBefore(formEl, statusEl);
     cleanupRules = attachLiveBusinessRules(archXml, formEl, fieldsInfo);
+    formEl.addEventListener("input", scheduleDocumentRulesSync);
+    formEl.addEventListener("change", scheduleDocumentRulesSync);
+    scheduleDocumentRulesSync(); // premier passage (ex: amount_total sur un nouveau document)
+    applyLedgerAdjustmentsToForm(); // ex: qty_received déjà ajustée par une réception validée hors-ligne
 
     currentContainer = formEl;
     currentFieldsInfo = fieldsInfo;
@@ -165,8 +172,83 @@ export async function mountFormController(container, params, env) {
     currentContainer.replaceWith(newFormEl);
     currentContainer = newFormEl;
     cleanupRules = attachLiveBusinessRules(archXml, newFormEl, currentFieldsInfo);
+    newFormEl.addEventListener("input", scheduleDocumentRulesSync);
+    newFormEl.addEventListener("change", scheduleDocumentRulesSync);
+    scheduleDocumentRulesSync();
+    applyLedgerAdjustmentsToForm();
 
     cp.breadcrumbCurrent.textContent = freshRecord.name || `#${currentRecordId}`;
+  }
+
+  /**
+   * NEW — branche runDocumentRules() (compute/onchange en cascade sur
+   * racine + lignes, ex: amount_total = f(order_line.price_total)) sur le
+   * formulaire réellement affiché. Jusqu'ici cette fonction du moteur
+   * n'était appelée par aucun fichier -- voir audit rules_engine.
+   * Débounce léger car buildDbSnapshot() interroge Dexie à chaque appel.
+   */
+  function scheduleDocumentRulesSync() {
+    if (!currentContainer || !currentFieldsInfo) return;
+    clearTimeout(rulesSyncTimer);
+    rulesSyncTimer = setTimeout(async () => {
+      const container = currentContainer;
+      const fieldsInfo = currentFieldsInfo;
+      if (!container || !fieldsInfo) return;
+
+      try {
+        const graph = buildDocumentGraph(container, fieldsInfo, currentReferenceValues);
+        const updatedGraph = await runDocumentRules(model, graph);
+
+        applyDocumentGraphToDom(container, fieldsInfo, updatedGraph);
+
+        for (const [fieldName, { rows }] of Object.entries(updatedGraph.lines || {})) {
+          const fieldWrapper = container.querySelector(`[data-one2many="${fieldName}"] [data-o2m-root="true"]`);
+          if (!fieldWrapper || !fieldWrapper._getTbody) continue;
+          const trs = Array.from(fieldWrapper._getTbody().querySelectorAll("tr")).filter((tr) => tr._cellRefs);
+          trs.forEach((tr, idx) => {
+            if (rows[idx]) applyLineRowToDom(tr, rows[idx]);
+          });
+        }
+      } catch (err) {
+        console.warn("[form_controller] Échec de l'exécution des règles document:", err);
+      }
+    }, 200);
+  }
+
+  /**
+   * NEW — applique les deltas en attente du ledger local (voir
+   * core/local_ledger.js) sur les lignes one2many affichées, pour un
+   * affichage immédiat de qty_received/qty_delivered après validation
+   * d'un bon de réception/livraison, sans attendre la sync avec Odoo.
+   * Générique : fonctionne pour n'importe quel champ ajusté par une
+   * règle "stock_effect" (voir rules/stock_rules.js), pas seulement
+   * qty_received/qty_delivered -- ne connaît pas ces noms de champs.
+   */
+  async function applyLedgerAdjustmentsToForm() {
+    if (!currentContainer || !currentFieldsInfo) return;
+
+    for (const [fieldName, info] of Object.entries(currentFieldsInfo)) {
+      if (info.type !== "one2many" || !info.relation) continue;
+
+      const fieldWrapper = currentContainer.querySelector(`[data-one2many="${fieldName}"] [data-o2m-root="true"]`);
+      if (!fieldWrapper || !fieldWrapper._getTbody) continue;
+
+      const trs = Array.from(fieldWrapper._getTbody().querySelectorAll("tr")).filter((tr) => tr._cellRefs && tr._recordId);
+      for (const tr of trs) {
+        let deltas;
+        try {
+          deltas = await getAggregatedDeltasByField(info.relation, String(tr._recordId));
+        } catch (err) {
+          continue; // pas de ledger pour cette ligne -- rien à ajuster
+        }
+        for (const [field, delta] of Object.entries(deltas)) {
+          const ref = tr._cellRefs[field];
+          if (!ref || ref.el === document.activeElement) continue;
+          const base = parseFloat(ref.el.value) || 0;
+          ref.el.value = (base + delta).toFixed(2);
+        }
+      }
+    }
   }
 
   /**
@@ -194,6 +276,24 @@ export async function mountFormController(container, params, env) {
 
     try {
       const localUuid = await queueMethodCall(model, currentRecordId, methodName);
+
+      // Effets de stock (voir rules/stock_rules.js) -- ex: valider un bon
+      // de réception/livraison. Calculés à partir de l'état actuel du
+      // formulaire (quantités saisies), écrits dans le ledger local pour
+      // un affichage immédiat sans attendre la sync avec Odoo. N'a aucun
+      // effet si aucune règle "stock_effect" ne couvre ce couple
+      // modèle/méthode (retourne un tableau vide).
+      try {
+        const graph = buildDocumentGraph(currentContainer, currentFieldsInfo, currentReferenceValues);
+        const deltas = await computeStockEffects(model, methodName, graph);
+        for (const d of deltas) {
+          await addLedgerDelta(d.model, d.key, d.deltaField, d.delta, localUuid);
+        }
+        if (deltas.length > 0) bus.trigger("ledger:updated");
+      } catch (err) {
+        console.warn("[form_controller] Échec du calcul des effets de stock:", err);
+      }
+
       statusEl.textContent = "Action enregistrée localement — sera synchronisée dès que possible.";
       bus.trigger("sync:updated");
 
@@ -235,6 +335,16 @@ export async function mountFormController(container, params, env) {
   async function saveRecord() {
     if (!currentContainer || !currentFieldsInfo) return;
     const formData = collectFormData(currentContainer, currentFieldsInfo);
+
+    // Règle constraint -- aucune n'existe encore dans rules/ pour ce
+    // projet, mais le point de branchement est désormais actif : la
+    // sauvegarde sera bloquée dès qu'une contrainte sera ajoutée.
+    const graphForValidation = buildDocumentGraph(currentContainer, currentFieldsInfo, currentReferenceValues);
+    const validation = await validateDocument(model, graphForValidation);
+    if (!validation.valid) {
+      statusEl.textContent = "Enregistrement bloqué : " + validation.errors.map((e) => e.message).join(" / ");
+      return;
+    }
 
     try {
       let localUuid;
@@ -307,6 +417,7 @@ export async function mountFormController(container, params, env) {
   }
 
   return () => {
+    clearTimeout(rulesSyncTimer);
     cleanupRules();
   };
 }

@@ -6,10 +6,7 @@
  */
 
 import { getReferenceRecords } from "../../core/name_service.js";
-
-function computeLineSubtotal(qty, price) {
-  return (qty || 0) * (price || 0);
-}
+import { runLineRules } from "../rules_engine/rules_engine.js";
 
 const QTY_FIELD_CANDIDATES = ["product_uom_qty", "product_qty", "quantity", "qty"];
 const PRICE_FIELD_CANDIDATES = ["price_unit"];
@@ -26,13 +23,33 @@ function computeTotalFromRows(tbody) {
   Array.from(tbody.querySelectorAll("tr")).forEach((tr) => {
     if (!tr._cellRefs) return;
 
+    // price_total (ou à défaut price_subtotal) est déjà calculé par la
+    // règle _compute_amount de rules_engine (voir x2many_field.js ->
+    // runLineRules) -- on le réutilise au lieu de refaire qty*price ici,
+    // ce qui dupliquait la même règle métier avec le risque de diverger
+    // (ex: si des taxes sont ajoutées un jour à la règle mais pas ici).
+    if (tr._cellRefs["price_total"]) {
+      total += parseFloat(tr._cellRefs["price_total"].el.value) || 0;
+      return;
+    }
+    if (tr._cellRefs["price_subtotal"]) {
+      total += parseFloat(tr._cellRefs["price_subtotal"].el.value) || 0;
+      return;
+    }
+
+    // Fallback pour les one2many sans champs price_subtotal/price_total
+    // (modèle non couvert par une règle spécifique de rules_engine) --
+    // qty*price est désormais une règle générique (model: "*") dans
+    // rules/generic_rules.js plutôt que réimplémenté ici (voir
+    // computeLineSubtotal() historique).
     const qtyField = findFirstAvailableField(tr._cellRefs, QTY_FIELD_CANDIDATES);
     const priceField = findFirstAvailableField(tr._cellRefs, PRICE_FIELD_CANDIDATES);
 
     const qty = qtyField ? parseFloat(tr._cellRefs[qtyField].el.value) || 0 : 0;
     const price = priceField ? parseFloat(tr._cellRefs[priceField].el.value) || 0 : 0;
 
-    total += computeLineSubtotal(qty, price);
+    const updates = runLineRules("*", { __qty: qty, __price: price }, { changedFields: ["__qty", "__price"] });
+    total += updates.__subtotal || 0;
   });
   return total;
 }

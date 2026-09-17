@@ -6,6 +6,7 @@
  */
 
 import { CONFIG, getApiKey, getUserId } from "../../core/browser/session.js";
+import { getSecurityInfo } from "../../core/user_service.js";
 import { getModuleManifest, resolveModelViews } from "../view_service.js";
 import { getListRecordsSmart, getPurchaseDashboardSmart } from "../../core/list_cache.js";
 import { formatCellValue } from "./list_renderer_utils.js";
@@ -13,6 +14,7 @@ import { renderListView } from "./list_renderer.js";
 import { renderKanbanView } from "../kanban/kanban_renderer.js";
 import { renderPurchaseDashboard, buildPurchaseDashboardDomain } from "../purchase_dashboard.js";
 import { buildControlPanel, renderViewSwitcherButtons } from "../../search/control_panel/control_panel.js";
+import { filterByRecordRule } from "../../model/rules_engine/rules_engine.js";
 
 const PAGE_SIZE = 20;
 
@@ -219,7 +221,10 @@ export async function mountListController(container, params, env) {
     }
 
     const listData = await getListRecordsSmart(model, apiKey, CONFIG.ODOO_BASE_URL, actionId);
-    allRecordsRaw = listData.records || [];
+    // Applique les record rules (ir.rule) mises en cache par user_service.js
+    // -- jusqu'ici récupérées mais jamais utilisées (voir audit rules_engine).
+    const securityInfo = await getSecurityInfo(model);
+    allRecordsRaw = filterByRecordRule(model, listData.records || [], securityInfo);
     applySearchFilter();
     renderCurrentPage();
 

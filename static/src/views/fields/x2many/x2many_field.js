@@ -4,6 +4,8 @@
 
 import { evaluateSimpleCondition } from "../../../core/py_js/py_utils.js";
 import { attachComputeEngine } from "../../../model/relational_model/compute_engine.js";
+import { runLineRules, checkOndeleteGuard } from "../../../model/rules_engine/rules_engine.js";
+import { getElementValue } from "../../form/form_serializer.js";
 import { getApiKey, CONFIG } from "../../../core/browser/session.js";
 import { getCatalogProductsSmart } from "../../../core/catalog_cache.js";
 import { db } from "../../../core/orm_service.js";
@@ -59,6 +61,12 @@ function getControlLabels(treeNode) {
 }
 
 export function renderOne2manyField(name, info, node, initialValue, parentValues) {
+  // Modèle des lignes (ex: "purchase.order.line") -- fourni par fields_get()
+  // comme pour les many2one (voir subFields[...].relation plus bas). Permet
+  // de retrouver les règles compute/onchange enregistrées dans rules_engine
+  // pour CE modèle précis, sans avoir à connaître purchase vs sale ici.
+  const lineModel = info.relation || null;
+
   const wrapper = document.createElement("div");
   wrapper.className = "o_field_one2many";
   wrapper.dataset.o2mRoot = "true";
@@ -398,13 +406,23 @@ export function renderOne2manyField(name, info, node, initialValue, parentValues
 
         const priceEl = existingTr._cellRefs["price_unit"]?.el;
         const subtotalEl = existingTr._cellRefs["price_subtotal"]?.el;
-        if (priceEl && subtotalEl) {
+        const totalEl = existingTr._cellRefs["price_total"]?.el;
+
+        // Règle _compute_amount (price_subtotal/price_total = f(qty, price))
+        // déplacée dans rules_engine -- voir rules/purchase_order.js et
+        // rules/sale_order.js. Fallback qty*price local conservé si le
+        // modèle de ligne n'est pas résolu (sécurité, ne devrait pas arriver).
+        if (lineModel && priceEl && subtotalEl) {
+          const price = parseFloat(priceEl.value) || 0;
+          const updates = runLineRules(lineModel, { [qtyField]: qty, price_unit: price }, {
+            changedFields: [qtyField],
+          });
+          if ("price_subtotal" in updates) subtotalEl.value = updates.price_subtotal.toFixed(2);
+          if (totalEl && "price_total" in updates) totalEl.value = updates.price_total.toFixed(2);
+        } else if (priceEl && subtotalEl) {
           const price = parseFloat(priceEl.value) || 0;
           subtotalEl.value = (price * qty).toFixed(2);
-        }
-        const totalEl = existingTr._cellRefs["price_total"]?.el;
-        if (totalEl && subtotalEl) {
-          totalEl.value = subtotalEl.value;
+          if (totalEl) totalEl.value = subtotalEl.value;
         }
         return;
       }
@@ -434,9 +452,6 @@ export function renderOne2manyField(name, info, node, initialValue, parentValues
     }
 
     pendingNewRows.forEach(({ productId, qty, product }) => {
-      const price = product ? Number(product.price) || 0 : 0;
-      const subtotal = (price * qty).toFixed(2);
-
       const rowData = { [qtyField]: qty };
 
       if (productFields.includes("product_id")) {
@@ -446,17 +461,39 @@ export function renderOne2manyField(name, info, node, initialValue, parentValues
         rowData["product_template_id"] = product.product_tmpl_id;
       }
 
-      if (subFields["name"] && product) {
-        rowData["name"] = product.name;
-      }
-      if (subFields["price_unit"]) {
-        rowData["price_unit"] = price;
-      }
-      if (subFields["price_subtotal"]) {
-        rowData["price_subtotal"] = subtotal;
-      }
-      if (subFields["price_total"]) {
-        rowData["price_total"] = subtotal;
+      // Règles _onchange_product_id (name/price_unit) puis _compute_amount
+      // (price_subtotal/price_total) -- déplacées dans rules_engine (voir
+      // rules/purchase_order.js et rules/sale_order.js). Le catalogue déjà
+      // en mémoire (productsById) sert de snapshot "db" pour l'onchange,
+      // pas besoin d'un aller-retour IndexedDB.
+      if (lineModel) {
+        const dbSnapshot = { get: (m, id) => (m === "product.product" ? productsById[id] || null : null) };
+
+        let line = { product_id: productId, [qtyField]: qty };
+        const onchangeUpdates = runLineRules(lineModel, line, {
+          changedFields: ["product_id"],
+          dbSnapshot,
+        });
+        Object.assign(line, onchangeUpdates);
+
+        const computeUpdates = runLineRules(lineModel, line, {
+          changedFields: [qtyField, "price_unit"],
+          dbSnapshot,
+        });
+        Object.assign(line, computeUpdates);
+
+        if (subFields["name"] && "name" in line) rowData["name"] = line.name;
+        if (subFields["price_unit"] && "price_unit" in line) rowData["price_unit"] = line.price_unit;
+        if (subFields["price_subtotal"] && "price_subtotal" in line) rowData["price_subtotal"] = line.price_subtotal;
+        if (subFields["price_total"] && "price_total" in line) rowData["price_total"] = line.price_total;
+      } else {
+        // Fallback (modèle de ligne non résolu) -- comportement d'origine.
+        const price = product ? Number(product.price) || 0 : 0;
+        const subtotal = (price * qty).toFixed(2);
+        if (subFields["name"] && product) rowData["name"] = product.name;
+        if (subFields["price_unit"]) rowData["price_unit"] = price;
+        if (subFields["price_subtotal"]) rowData["price_subtotal"] = subtotal;
+        if (subFields["price_total"]) rowData["price_total"] = subtotal;
       }
 
       addRow(rowData);
@@ -469,6 +506,12 @@ export function renderOne2manyField(name, info, node, initialValue, parentValues
   function addRow(rowData = {}) {
     const tr = document.createElement("tr");
     tr.className = "o_data_row";
+    // Conserve l'enregistrement brut complet (pas seulement les colonnes
+    // affichées) -- des champs techniques comme purchase_line_id/
+    // sale_line_id (utilisés par rules/stock_rules.js) peuvent être
+    // présents dans les données serveur sans être déclarés comme colonne
+    // dans l'arch XML de la vue. Sans ça, ils seraient perdus au rendu.
+    tr._rawRowData = rowData || {};
     const cellRefs = {};
 
     columns.forEach((col) => {
@@ -492,6 +535,25 @@ export function renderOne2manyField(name, info, node, initialValue, parentValues
     removeBtn.className = "fa fa-trash-o";
     removeBtn.setAttribute("aria-label", "Supprimer la ligne");
     removeBtn.addEventListener("click", () => {
+      // Règle ondelete_guard -- aucune n'existe encore dans rules/ pour
+      // purchase.order.line/sale.order.line, mais le point de branchement
+      // est désormais actif : dès qu'une règle sera ajoutée (ex: interdire
+      // la suppression d'une ligne déjà facturée), elle sera respectée ici
+      // sans toucher à x2many_field.js.
+      if (lineModel) {
+        const rowValues = {};
+        for (const [col, ref] of Object.entries(tr._cellRefs)) {
+          rowValues[col] = getElementValue(ref.el, ref.info);
+        }
+        if (tr._recordId) rowValues.id = tr._recordId;
+
+        const guard = checkOndeleteGuard(lineModel, rowValues);
+        if (!guard.valid) {
+          alert(guard.message || "Suppression bloquée par une règle métier.");
+          return;
+        }
+      }
+
       tr.remove();
       recomputeTotal();
     });

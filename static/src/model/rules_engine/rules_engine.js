@@ -24,21 +24,63 @@ const MAX_CASCADE_ITERATIONS = 8; // garde-fou anti-boucle infinie
 function classifyRule(rule) {
   if (rule.type === "constraint") return "constraint";
   if (rule.type === "ondelete_guard") return "ondelete";
+  if (rule.type === "access") return "access"; // droits CRUD + groupes -- voir rules/access_rules.js
+  if (rule.type === "domain") return "domain"; // classification métier + record rules -- voir rules/domain_rules.js
+  if (rule.type === "default") return "default"; // valeurs par défaut implicites -- voir rules/default_rules.js
+  if (rule.type === "stock_effect") return "stock_effect"; // effets de stock (ledger) -- voir rules/stock_rules.js
   if ("computes" in rule) return "compute"; // @api.depends -- voir generate_rules_js.py
   return "onchange"; // @api.onchange -- pas de clé "computes" dans ce cas
 }
 
+const RULE_BUCKETS = ["compute", "onchange", "constraint", "ondelete", "access", "domain", "default", "stock_effect"];
+
+/**
+ * Modèle spécial : règles applicables à tous les modèles (droits CRUD
+ * génériques, valeur par défaut générique...). Ce n'est pas un vrai nom de
+ * modèle Odoo -- juste une clé de regroupement dans rulesByModel.
+ */
+const WILDCARD_MODEL = "*";
+
 /**
  * À appeler une seule fois au démarrage de l'app avec `allRules` importé
- * depuis rules_output_v2/index.js.
+ * depuis model/rules_engine/rules/index.js.
  */
 export function initRulesEngine(allRules) {
   rulesByModel = new Map();
   for (const rule of allRules) {
     if (!rulesByModel.has(rule.model)) {
-      rulesByModel.set(rule.model, { compute: [], onchange: [], constraint: [], ondelete: [] });
+      const buckets = {};
+      RULE_BUCKETS.forEach((b) => (buckets[b] = []));
+      rulesByModel.set(rule.model, buckets);
     }
     rulesByModel.get(rule.model)[classifyRule(rule)].push(rule);
+  }
+}
+
+/**
+ * Concatène les règles d'un bucket donné pour un modèle précis ET pour le
+ * modèle générique "*" (ex: droits CRUD, valables pour tous les modèles).
+ */
+function getRulesForModel(model, bucket) {
+  const generic = rulesByModel.get(WILDCARD_MODEL);
+  const specific = rulesByModel.get(model);
+  return [
+    ...(generic ? generic[bucket] : []),
+    ...(specific && model !== WILDCARD_MODEL ? specific[bucket] : []),
+  ];
+}
+
+/**
+ * Exécute rule.evaluate(...) en capturant toute exception -- même logique
+ * de robustesse que safeCall(), mais pour les règles "access"/"domain"/
+ * "default" qui n'opèrent pas sur un documentGraph.
+ */
+function safeEvaluate(rule, ...args) {
+  try {
+    return rule.evaluate(...args);
+  } catch (err) {
+    console.error(`[rules_engine] Erreur dans la règle ${rule.name || rule.method} (${rule.model}):`, err);
+    return null;
   }
 }
 
@@ -214,6 +256,43 @@ function safeCall(rule, record, dbSnapshot) {
 }
 
 // ---------------------------------------------------------------------------
+// Effets de stock (règles "stock_effect") -- voir rules/stock_rules.js
+// ---------------------------------------------------------------------------
+
+/**
+ * Calcule les effets de stock déclenchés par l'exécution d'une méthode
+ * objet (ex: stock.picking::button_validate) -- reproduit le workflow
+ * Odoo 17 où c'est la VALIDATION du bon (pas la confirmation de la
+ * commande d'achat/vente) qui modifie réellement le stock et les
+ * quantités reçues/livrées.
+ *
+ * Ne modifie rien elle-même : retourne la liste des deltas à écrire via
+ * core/local_ledger.js::addLedgerDelta() -- le caller (form_controller.js)
+ * est responsable de l'écriture car lui seul connaît le local_uuid de
+ * l'action en cours.
+ *
+ * @param {string} model - modèle sur lequel la méthode est appelée (ex: "stock.picking")
+ * @param {string} methodName - nom de la méthode (ex: "button_validate")
+ * @param {Object} documentGraph - {root, lines} (voir form_serializer.js::buildDocumentGraph)
+ * @returns {Promise<Array<{model, key, deltaField, delta}>>}
+ */
+export async function computeStockEffects(model, methodName, documentGraph) {
+  const rules = getRulesForModel(model, "stock_effect").filter((r) => r.method === methodName);
+  if (rules.length === 0) return [];
+
+  const modelsInvolved = new Set([model]);
+  for (const { model: lineModel } of Object.values(documentGraph.lines || {})) modelsInvolved.add(lineModel);
+  const dbSnapshot = await buildDbSnapshot(modelsInvolved);
+
+  const deltas = [];
+  for (const rule of rules) {
+    const result = safeCall(rule, documentGraph, dbSnapshot);
+    if (Array.isArray(result)) deltas.push(...result);
+  }
+  return deltas;
+}
+
+// ---------------------------------------------------------------------------
 // Validation : constraints + ondelete_guard (appelés à la demande, PAS en
 // cascade automatique -- typiquement juste avant queueAction() dans
 // form_controller.js)
@@ -278,4 +357,119 @@ export function checkOndeleteGuard(model, record) {
     }
   }
   return { valid: true };
+}
+
+// ---------------------------------------------------------------------------
+// Règles "access" : droits CRUD (ir.model.access) + visibilité par groupe.
+// Déplacées depuis core/user_service.js::canPerform() et
+// core/py_js/py_utils.js::isNodeVisible() -- voir rules/access_rules.js.
+// ---------------------------------------------------------------------------
+
+/**
+ * @param {string} model
+ * @param {string} action - "read" | "write" | "create" | "unlink"
+ * @param {Object} securityContext - { is_admin, rights } (voir user_service.js)
+ * @returns {boolean}
+ */
+export function canPerformAction(model, action, securityContext) {
+  const rules = getRulesForModel(model, "access").filter((r) => r.subtype === "crud");
+  if (rules.length === 0) return false; // pas de règle enregistrée -- refus par défaut, comme l'ancien canPerform()
+  return rules.every((rule) => safeEvaluate(rule, securityContext, action) !== false);
+}
+
+/**
+ * @param {string} groupsAttr - valeur brute de l'attribut XML groups="..."
+ * @param {Object} securityContext - { is_admin, groups }
+ * @returns {boolean}
+ */
+export function isAllowedByGroups(groupsAttr, securityContext) {
+  const rules = getRulesForModel(WILDCARD_MODEL, "access").filter((r) => r.subtype === "groups");
+  if (rules.length === 0) return true; // pas de règle enregistrée -- ne bloque rien
+  return rules.every((rule) => safeEvaluate(rule, groupsAttr, securityContext) !== false);
+}
+
+// ---------------------------------------------------------------------------
+// Règles "domain" : classification métier nommée (ex: dashboard achats) et
+// application des record rules (ir.rule) -- voir rules/domain_rules.js.
+// ---------------------------------------------------------------------------
+
+/**
+ * Évalue une règle de domaine nommée (ex: "purchase_dashboard_state") avec
+ * les paramètres fournis, et retourne ce que la règle calcule (typiquement
+ * un domaine Odoo [[field, op, value], ...]).
+ */
+export function evaluateNamedDomain(name, params) {
+  for (const [, buckets] of rulesByModel) {
+    const found = buckets.domain.find((r) => r.name === name);
+    if (found) return safeEvaluate(found, params);
+  }
+  console.warn(`[rules_engine] Aucune règle de domaine nommée "${name}" trouvée.`);
+  return null;
+}
+
+/**
+ * Filtre une liste d'enregistrements selon les record rules (ir.rule) du
+ * modèle -- récupérées par user_service.js dans securityInfo.record_rule_domain
+ * mais jamais appliquées jusqu'ici (voir audit).
+ * @returns {Array} le sous-ensemble des enregistrements autorisés
+ */
+export function filterByRecordRule(model, records, securityInfo) {
+  const rules = getRulesForModel(model, "domain").filter((r) => r.subtype === "record_rule");
+  if (rules.length === 0) return records;
+  return records.filter((record) => rules.every((rule) => safeEvaluate(rule, record, securityInfo) !== false));
+}
+
+// ---------------------------------------------------------------------------
+// Règles "default" : valeurs par défaut implicites -- voir rules/default_rules.js.
+// ---------------------------------------------------------------------------
+
+/**
+ * @returns {*} la valeur par défaut si une règle s'applique, sinon undefined
+ */
+export function getDefaultValue(model, field, currentValues) {
+  const rules = getRulesForModel(model, "default").filter((r) => r.field === field);
+  for (const rule of rules) {
+    const result = safeEvaluate(rule, currentValues);
+    if (result !== undefined && result !== null) return result;
+  }
+  return undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Exécution compute/onchange pour UNE SEULE ligne, sans documentGraph complet
+// -- utilisé par les widgets qui manipulent le DOM directement (ex:
+// x2many_field.js), qui n'ont pas besoin de la cascade complète sur
+// racine+lignes gérée par runDocumentRules().
+// ---------------------------------------------------------------------------
+
+/**
+ * @param {string} lineModel - ex: "purchase.order.line"
+ * @param {Object} line - valeurs actuelles de la ligne
+ * @param {Object} [options]
+ * @param {Array<string>|null} [options.changedFields] - champs modifiés
+ *   (null = tout évaluer, comme le premier passage de runDocumentRules)
+ * @param {Object} [options.dbSnapshot] - objet { get(model, id) } ; par
+ *   défaut le dernier snapshot construit par runDocumentRules/validateDocument,
+ *   mais peut être fourni directement (ex: catalogue produits déjà en mémoire)
+ * @returns {Object} uniquement les champs mis à jour par les règles
+ */
+export function runLineRules(lineModel, line, { changedFields = null, dbSnapshot = currentSnapshot } = {}) {
+  const rulesForModel = rulesByModel.get(lineModel);
+  if (!rulesForModel) return {};
+
+  const working = { ...line };
+  const updates = {};
+
+  for (const rule of [...rulesForModel.onchange, ...rulesForModel.compute]) {
+    const triggered = changedFields === null || rule.trigger.fields.some((f) => changedFields.includes(f));
+    if (!triggered) continue;
+
+    const result = safeCall(rule, working, dbSnapshot);
+    if (!result) continue;
+
+    Object.assign(working, result);
+    Object.assign(updates, result);
+  }
+
+  return updates;
 }

@@ -24,6 +24,7 @@ fi
 
 "$ESBUILD" "$ENTRY" \
   --bundle \
+  --loader:.xml=text \
   --outfile="$OUTPUT" \
   --format=iife \
   --target=es2020 \

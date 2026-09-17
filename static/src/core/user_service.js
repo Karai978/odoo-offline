@@ -15,6 +15,7 @@
  */
 
 import { db } from "./orm_service.js";
+import { canPerformAction } from "../model/rules_engine/rules_engine.js";
 
 /* ---------------------------------------------------------------------- */
 /* Droits d'accès (ex core/user.js)                                       */
@@ -65,13 +66,14 @@ export async function getSecurityInfo(modelName) {
 /**
  * Simple check to call before displaying a button or authorizing
  * a local action (e.g., before allowing "Delete" on an order).
+ * La décision elle-même (is_admin ? autorisé : selon rights[action]) est
+ * désormais une règle du rules_engine (voir rules/access_rules.js) --
+ * ce fichier ne fait plus que fournir les données mises en cache.
  */
 export async function canPerform(modelName, action) {
   // action: "read" | "write" | "create" | "unlink"
   const info = await getSecurityInfo(modelName);
-  if (!info) return false; // by default, deny if not yet in cache
-  if (info.is_admin) return true;
-  return !!info.rights[action];
+  return canPerformAction(modelName, action, info);
 }
 
 /* ---------------------------------------------------------------------- */

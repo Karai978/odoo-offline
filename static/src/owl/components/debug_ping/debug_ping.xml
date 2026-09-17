@@ -1,0 +1,6 @@
+<div class="pwa-owl-debug-ping" style="border:2px dashed #1F3864; padding:12px; border-radius:6px; font-family:sans-serif; max-width:320px;">
+  <div style="font-weight:bold; margin-bottom:6px;">OWL smoke test</div>
+  <div>Compteur : <span t-esc="state.count"/></div>
+  <button t-on-click="increment" class="btn btn-sm btn-primary" style="margin-top:6px;">+1</button>
+  <button t-on-click="() => this.destroyMe()" class="btn btn-sm btn-secondary" style="margin-top:6px; margin-left:4px;">Fermer</button>
+</div>

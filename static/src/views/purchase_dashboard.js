@@ -4,6 +4,8 @@
  * for the Purchasing dashboard — its display had been explicitly deferred
  */
 
+import { evaluateNamedDomain } from "../model/rules_engine/rules_engine.js";
+
 function formatKpiAmount(value, symbol, position) {
   const formatted = Number(value).toLocaleString("fr-FR", {
     minimumFractionDigits: 2,
@@ -109,19 +111,10 @@ export function renderPurchaseDashboard(dashboardData, activeFilter, onFilterCli
 /**
  * Constructs the Odoo domain corresponding to a dashboard tile,
  * exactly mirroring the backend logic (purchase_dashboard controller).
+ * Logique déplacée dans model/rules_engine/rules/domain_rules.js
+ * (règle nommée "purchase_dashboard_state") pour être partagée avec
+ * views/list/list_controller.js sans duplication.
  */
 export function buildPurchaseDashboardDomain(rowKey, stateKey, userId) {
-  let domain;
-  if (stateKey === "a_envoyer") {
-    domain = [["state", "=", "draft"]];
-  } else if (stateKey === "en_attente") {
-    domain = [["state", "=", "sent"]];
-  } else {
-    const today = new Date().toISOString().slice(0, 10);
-    domain = [["state", "in", ["draft", "sent"]], ["date_order", "<", today]];
-  }
-  if (rowKey === "mes" && userId) {
-    domain.push(["user_id", "=", userId]);
-  }
-  return domain;
+  return evaluateNamedDomain("purchase_dashboard_state", { rowKey, stateKey, userId });
 }
