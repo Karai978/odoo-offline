@@ -13,9 +13,11 @@ import { getRecordSmart } from "../../core/record_cache.js";
 import { getSecurityInfo } from "../../core/user_service.js";
 import { renderFormView } from "./form_renderer.js";
 import { attachLiveBusinessRules } from "../../model/relational_model/relational_model.js";
-import { runDocumentRules, validateDocument, computeStockEffects } from "../../model/rules_engine/rules_engine.js";
+import { runDocumentRules, validateDocument, computeStockEffects, computeOptimisticStateUpdate } from "../../model/rules_engine/rules_engine.js";
 import { collectFormData, buildDocumentGraph, applyDocumentGraphToDom, applyLineRowToDom } from "./form_serializer.js";
 import { addLedgerDelta, getAggregatedDeltasByField } from "../../core/local_ledger.js";
+import { patchCachedRecord } from "../../core/record_cache.js";
+import { router } from "../../core/browser/router_service.js";
 import {
   queueAction,
   queueMethodCall,
@@ -252,6 +254,49 @@ export async function mountFormController(container, params, env) {
   }
 
   /**
+   * NEW — applique une mise à jour OPTIMISTE locale (voir
+   * rules/stock_rules.js::optimisticState) suite à un clic sur un bouton
+   * objet, sans attendre la synchronisation. Re-rend tout le formulaire
+   * (comme refreshFormFromServer(), mais à partir de données patchées
+   * localement plutôt que du serveur) car le widget statusbar affichant
+   * "state" n'est pas un simple <input> -- un patch DOM ciblé ne le
+   * rafraîchirait pas visuellement.
+   */
+  async function applyOptimisticStateUpdate(methodName, documentGraph) {
+    const optimistic = computeOptimisticStateUpdate(model, methodName, documentGraph);
+    const hasRootUpdate = Object.keys(optimistic.root).length > 0;
+    const hasLineUpdate = Object.keys(optimistic.lineUpdates).length > 0;
+    if (!hasRootUpdate && !hasLineUpdate) return; // aucune règle ne couvre ce couple modèle/méthode
+
+    Object.assign(currentReferenceValues, optimistic.root);
+    if (hasLineUpdate) {
+      for (const fieldName of Object.keys(documentGraph.lines || {})) {
+        if (Array.isArray(currentReferenceValues[fieldName])) {
+          currentReferenceValues[fieldName] = currentReferenceValues[fieldName].map((row) => ({
+            ...row,
+            ...optimistic.lineUpdates,
+          }));
+        }
+      }
+    }
+
+    await patchCachedRecord(model, currentRecordId, currentReferenceValues);
+
+    const patchedRecord = { ...currentReferenceValues, id: currentRecordId };
+    const newFormEl = renderFormView(archXml, currentFieldsInfo, patchedRecord, currentSecurityContext, onObjectButtonClick);
+    newFormEl.dataset.model = model;
+
+    cleanupRules();
+    currentContainer.replaceWith(newFormEl);
+    currentContainer = newFormEl;
+    cleanupRules = attachLiveBusinessRules(archXml, newFormEl, currentFieldsInfo);
+    newFormEl.addEventListener("input", scheduleDocumentRulesSync);
+    newFormEl.addEventListener("change", scheduleDocumentRulesSync);
+    scheduleDocumentRulesSync();
+    applyLedgerAdjustmentsToForm();
+  }
+
+  /**
    * NEW — handles a click on a type="object" header button (e.g.
    * action_confirm, action_cancel, action_lock...). Follows the exact
    * same pattern already used by saveRecord(): always queue locally
@@ -290,6 +335,13 @@ export async function mountFormController(container, params, env) {
           await addLedgerDelta(d.model, d.key, d.deltaField, d.delta, localUuid);
         }
         if (deltas.length > 0) bus.trigger("ledger:updated");
+
+        // Mise à jour OPTIMISTE de l'enregistrement lui-même (ex: state
+        // "assigned" -> "done") -- données locales changées TOUT DE SUITE,
+        // avant même de savoir si la connexion est disponible. La vraie
+        // valeur serveur prendra le relais via refreshFormFromServer() une
+        // fois la synchronisation confirmée (voir plus bas).
+        await applyOptimisticStateUpdate(methodName, graph);
       } catch (err) {
         console.warn("[form_controller] Échec du calcul des effets de stock:", err);
       }
@@ -383,6 +435,7 @@ export async function mountFormController(container, params, env) {
         if (wasCreate) {
           currentRecordId = result.createdIds[localUuid];
           pendingCreateUuid = null;
+          router.replaceState({ tag: "form_view", module, model, id: currentRecordId, actionId, listLabel });
         }
 
         if (result.synced > 0) {

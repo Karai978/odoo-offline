@@ -292,6 +292,45 @@ export async function computeStockEffects(model, methodName, documentGraph) {
   return deltas;
 }
 
+/**
+ * Calcule la mise à jour OPTIMISTE (locale, immédiate, avant toute
+ * synchronisation) déclenchée par l'exécution d'une méthode objet -- ex:
+ * stock.picking::button_validate passe state "assigned" -> "done" et
+ * marque chaque ligne "picked" dans l'attente, pour que l'écran reflète
+ * tout de suite l'action même hors-ligne. Complémentaire de
+ * computeStockEffects() (qui calcule les deltas d'AUTRES enregistrements,
+ * ex: qty_received sur la commande d'origine) -- celle-ci ne concerne que
+ * l'enregistrement sur lequel le bouton a été cliqué.
+ *
+ * Synchrone : ne modifie aucune donnée elle-même, ne fait aucun I/O --
+ * c'est au caller (form_controller.js) d'appliquer le résultat au DOM et
+ * au cache local.
+ *
+ * @returns {{ root: Object, lineUpdates: Object }} - root: champs à
+ *   fusionner sur l'enregistrement racine ; lineUpdates: champs à
+ *   fusionner sur CHAQUE ligne du one2many concerné (mêmes valeurs pour
+ *   toutes les lignes -- pas de logique par ligne pour l'instant).
+ */
+export function computeOptimisticStateUpdate(model, methodName, documentGraph) {
+  const rules = getRulesForModel(model, "stock_effect").filter(
+    (r) => r.method === methodName && typeof r.optimisticState === "function"
+  );
+
+  const result = { root: {}, lineUpdates: {} };
+  for (const rule of rules) {
+    let partial;
+    try {
+      partial = rule.optimisticState(documentGraph);
+    } catch (err) {
+      console.error(`[rules_engine] Erreur optimisticState ${model}.${rule.method}:`, err);
+      continue;
+    }
+    if (partial && partial.root) Object.assign(result.root, partial.root);
+    if (partial && partial.lineUpdates) Object.assign(result.lineUpdates, partial.lineUpdates);
+  }
+  return result;
+}
+
 // ---------------------------------------------------------------------------
 // Validation : constraints + ondelete_guard (appelés à la demande, PAS en
 // cascade automatique -- typiquement juste avant queueAction() dans

@@ -53,6 +53,28 @@ export async function getCachedRecord(modelName, recordId) {
 }
 
 /**
+ * Applique un patch partiel à un enregistrement déjà en cache local, sans
+ * appel serveur -- utilisé pour refléter immédiatement l'effet OPTIMISTE
+ * d'une action hors-ligne (ex: state "assigned" -> "done" après un clic
+ * sur "Valider"), en attendant la confirmation réelle du serveur.
+ * Si l'enregistrement n'est pas encore en cache, ne fait rien (on ne peut
+ * pas patcher ce qu'on n'a pas).
+ */
+export async function patchCachedRecord(modelName, recordId, patch) {
+  const existing = await getCachedRecord(modelName, recordId);
+  if (!existing) return null;
+
+  const updated = { ...existing, ...patch };
+  await db.record_cache.put({
+    model: modelName,
+    record_id: parseInt(recordId, 10),
+    data: updated,
+    updated_at: new Date().toISOString(),
+  });
+  return updated;
+}
+
+/**
  * Retrieves a record intelligently: prioritizes the server if online, 
  * otherwise the local cache, with a safe fallback to prevent crashes.
  */

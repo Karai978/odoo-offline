@@ -96,5 +96,17 @@ export const stockPickingRules = [
 
       return deltas;
     },
+
+    // Effet OPTIMISTE local (pas un delta d'un AUTRE enregistrement comme
+    // ci-dessus, mais l'état visuel du picking lui-même) -- state passe
+    // "assigned"/"confirmed" -> "done", et chaque ligne est marquée
+    // "picked", pour que l'écran reflète l'action tout de suite même
+    // hors-ligne, en attendant la confirmation réelle du serveur.
+    optimisticState() {
+      return {
+        root: { state: "done" },
+        lineUpdates: { picked: true },
+      };
+    },
   },
 ];
