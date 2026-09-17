@@ -52,14 +52,6 @@ function boot() {
     initialRouterState: router.current,
   });
 
-  console.log("[pwa-standalone] Phase 6 démarrée", {
-    ODOO_BASE_URL: CONFIG.ODOO_BASE_URL,
-    dbName: db.name,
-    session: getSession(),
-    pyUtilsSample: evaluateSimpleCondition("state == 'draft'", {}),
-    actionsRegistered: registry.category("actions").getEntries().map(([k]) => k),
-  });
-
   const actionService = mountWebclient();
   window.__pwa_debug__ = { registry, bus, router, actionService };
   window.__owl_debug__ = owlDebug;
