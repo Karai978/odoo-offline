@@ -21,6 +21,10 @@ const HOME_MENU_TEMPLATE = `
       </span>
       <input type="text" placeholder="click here...">
     </div>
+
+    <button id="refresh-modules-btn" class="refresh-btn">Actualiser les modules</button>
+    <p id="sync-status" class="sync-status"></p>
+
     <div class="modules-grid" id="modules-grid"></div>
   </main>
 `;
@@ -54,6 +58,8 @@ function mountHomeMenu(container, params, env) {
   container.classList.add("dashboard-body");
 
   const grid = container.querySelector("#modules-grid");
+  const statusEl = container.querySelector("#sync-status");
+  const refreshBtn = container.querySelector("#refresh-modules-btn");
 
   async function openApp(app, cardEl) {
     const custom = CUSTOM_IMPLEMENTATIONS[app.technical_name];
@@ -128,10 +134,15 @@ function mountHomeMenu(container, params, env) {
 
   async function refreshInstalledApps() {
     if (!navigator.onLine) {
+      statusEl.textContent = "Hors ligne — utilisation de la dernière liste connue";
       renderModulesGrid(await getCachedApps());
       return;
     }
-    
+
+    refreshBtn.disabled = true;
+    refreshBtn.textContent = "Actualisation...";
+    statusEl.textContent = "";
+
     try {
       const response = await fetch(`${CONFIG.ODOO_BASE_URL}/offline_sync/installed_apps`, {
         headers: { Authorization: `Bearer ${getApiKey()}` },
@@ -150,10 +161,14 @@ function mountHomeMenu(container, params, env) {
       await saveCachedApps(data.apps);
       renderModulesGrid(data.apps);
     } catch (err) {
-        console.warn("Impossible de contacter Odoo — liste locale utilisée:", err);
-        renderModulesGrid(await getCachedApps());
+      statusEl.textContent = "Impossible de contacter Odoo — liste locale utilisée";
+      renderModulesGrid(await getCachedApps());
+    } finally {
+      refreshBtn.disabled = false;
+      refreshBtn.textContent = "Actualiser les modules";
     }
   }
+  refreshBtn.addEventListener("click", refreshInstalledApps);
 
   async function loadDashboardInfo() {
     try {
@@ -204,11 +219,13 @@ function mountHomeMenu(container, params, env) {
 
   (async () => {
     await renderModulesGrid(await getCachedApps());
+    await refreshInstalledApps();
     await loadDashboardInfo();
   })();
 
   return {
     destroy() {
+      refreshBtn.removeEventListener("click", refreshInstalledApps);
       unloadDashboardStyle();
     },
   };
