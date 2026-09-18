@@ -4,11 +4,10 @@
 
 import { CONFIG, getApiKey, getSession, clearSession } from "../../core/browser/session.js";
 import { getCachedApps, saveCachedApps } from "../menus/menu_service.js";
-import { getCachedModuleManifest } from "../../views/view_service.js";
+import { getCachedModuleManifest, getModuleManifest } from "../../views/view_service.js";
 import { downloadFullApp } from "../offline_prefetch_service.js";
 import { registry } from "../../core/registry.js";
 import { bus } from "../../core/bus/bus_service.js";
-import { getModuleManifest } from "../../views/view_service.js";
 import { resolveNaturalLanding } from "../navbar/navbar.js";
 import { saveCachedProfile, getCachedProfile } from "../../core/user_service.js";
 
@@ -61,7 +60,6 @@ function mountHomeMenu(container, params, env) {
   const grid = container.querySelector("#modules-grid");
   const statusEl = container.querySelector("#sync-status");
   const refreshBtn = container.querySelector("#refresh-modules-btn");
-  const switcherDropdown = container.querySelector("#app-switcher-dropdown");
 
   async function openApp(app, cardEl) {
     const custom = CUSTOM_IMPLEMENTATIONS[app.technical_name];

@@ -11,7 +11,6 @@ const ASSETS_TO_CACHE = [
   "./static/src/bundles/app.bundle.js",
   "./static/lib/dexie.min.js",
   "./static/lib/popper.js",
-  "./css/style_login.css",
   "./static/src/webclient/home_menu/home_menu.css",
   "./css/web.assets_web.min.css",
   "./css/web.assets_frontend.min.css",

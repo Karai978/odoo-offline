@@ -1,9 +1,8 @@
 import { registry } from "./core/registry.js";
 import { bus } from "./core/bus/bus_service.js";
 import { router } from "./core/browser/router_service.js";
-import { CONFIG, getSession } from "./core/browser/session.js";
+import { CONFIG } from "./core/browser/session.js";
 import { db } from "./core/orm_service.js";
-import { evaluateSimpleCondition } from "./core/py_js/py_utils.js";
 import { initRulesEngine } from "./model/rules_engine/rules_engine.js";
 import { allRules } from "./model/rules_engine/rules/index.js";
 
