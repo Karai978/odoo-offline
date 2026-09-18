@@ -21,10 +21,6 @@ const HOME_MENU_TEMPLATE = `
       </span>
       <input type="text" placeholder="click here...">
     </div>
-
-    <button id="refresh-modules-btn" class="refresh-btn">Actualiser les modules</button>
-    <p id="sync-status" class="sync-status"></p>
-
     <div class="modules-grid" id="modules-grid"></div>
   </main>
 `;
@@ -58,8 +54,6 @@ function mountHomeMenu(container, params, env) {
   container.classList.add("dashboard-body");
 
   const grid = container.querySelector("#modules-grid");
-  const statusEl = container.querySelector("#sync-status");
-  const refreshBtn = container.querySelector("#refresh-modules-btn");
 
   async function openApp(app, cardEl) {
     const custom = CUSTOM_IMPLEMENTATIONS[app.technical_name];
@@ -122,38 +116,10 @@ function mountHomeMenu(container, params, env) {
       card.innerHTML = `
         <div class="icon-wrapper"><img src="${iconSrc}" alt="${app.label}" onerror="this.src='assets/default-app.png'"></div>
         <p>${app.label}</p>
-        <span class="module-badge">${isReady ? "Disponible" : "Non pris en charge"}</span>
-        ${isReady ? `
-          <button class="download-btn" data-module="${app.technical_name}">
-            ${isCached ? "Mis à jour" : "Télécharger"}
-          </button>
-        ` : ""}
       `;
 
       if (isReady) {
-        card.addEventListener("click", (e) => {
-          if (e.target.classList.contains("download-btn")) return;
-          openApp(app, card);
-        });
-
-        const downloadBtn = card.querySelector(".download-btn");
-        downloadBtn.addEventListener("click", async (e) => {
-          e.stopPropagation();
-          downloadBtn.disabled = true;
-
-          try {
-            const apiKey = getApiKey();
-            await downloadFullApp(app.technical_name, apiKey, CONFIG.ODOO_BASE_URL, (message) => {
-              downloadBtn.textContent = message;
-            });
-            downloadBtn.textContent = "Disponible hors-ligne";
-          } catch (err) {
-            console.error(err);
-            downloadBtn.textContent = "Échec — réessayer";
-          } finally {
-            downloadBtn.disabled = false;
-          }
-        });
+        card.addEventListener("click", () => openApp(app, card));
       }
 
       grid.appendChild(card);
@@ -162,15 +128,10 @@ function mountHomeMenu(container, params, env) {
 
   async function refreshInstalledApps() {
     if (!navigator.onLine) {
-      statusEl.textContent = "Hors ligne — utilisation de la dernière liste connue";
       renderModulesGrid(await getCachedApps());
       return;
     }
-
-    refreshBtn.disabled = true;
-    refreshBtn.textContent = "Actualisation...";
-    statusEl.textContent = "";
-
+    
     try {
       const response = await fetch(`${CONFIG.ODOO_BASE_URL}/offline_sync/installed_apps`, {
         headers: { Authorization: `Bearer ${getApiKey()}` },
@@ -188,16 +149,11 @@ function mountHomeMenu(container, params, env) {
       const data = await response.json();
       await saveCachedApps(data.apps);
       renderModulesGrid(data.apps);
-      statusEl.textContent = `${data.apps.length} app(s) installée(s) détectée(s)`;
     } catch (err) {
-      statusEl.textContent = "Impossible de contacter Odoo — liste locale utilisée";
-      renderModulesGrid(await getCachedApps());
-    } finally {
-      refreshBtn.disabled = false;
-      refreshBtn.textContent = "Actualiser les modules";
+        console.warn("Impossible de contacter Odoo — liste locale utilisée:", err);
+        renderModulesGrid(await getCachedApps());
     }
   }
-  refreshBtn.addEventListener("click", refreshInstalledApps);
 
   async function loadDashboardInfo() {
     try {
@@ -248,13 +204,11 @@ function mountHomeMenu(container, params, env) {
 
   (async () => {
     await renderModulesGrid(await getCachedApps());
-    await refreshInstalledApps();
     await loadDashboardInfo();
   })();
 
   return {
     destroy() {
-      refreshBtn.removeEventListener("click", refreshInstalledApps);
       unloadDashboardStyle();
     },
   };
