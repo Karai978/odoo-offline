@@ -28,7 +28,7 @@ const KANBAN_GLOBAL_DEFAULTS = {
   selection_mode: false,
 };
 
-export function renderKanbanView(archXml, fieldsInfo, records, onCardClick) {
+export function renderKanbanView(archXml, fieldsInfo, records, onCardClick, onNavigate) {
   const parser = new DOMParser();
   const doc = parser.parseFromString(archXml, "text/xml");
 
@@ -69,7 +69,16 @@ export function renderKanbanView(archXml, fieldsInfo, records, onCardClick) {
       if (rendered) cardWrapper.appendChild(rendered);
     }
 
-    cardWrapper.addEventListener("click", () => onCardClick(rawRecord.id));
+    cardWrapper.addEventListener("click", (e) => {
+      const el = e.target.closest("[type='object']");
+      if (el && onNavigate) {
+        e.preventDefault();
+        e.stopPropagation();
+        onNavigate(el.getAttribute("name"), rawRecord.id);
+        return;
+      }
+      onCardClick(rawRecord.id);
+    });
     renderer.appendChild(cardWrapper);
   });
 

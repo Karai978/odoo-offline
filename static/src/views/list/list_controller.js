@@ -5,6 +5,7 @@
  * text search, and switching between list and kanban views.
  */
 
+import { buildStockPickingTypeDomain } from "./stock_picking_dashboard.js";
 import { CONFIG, getApiKey, getUserId } from "../../core/browser/session.js";
 import { getSecurityInfo } from "../../core/user_service.js";
 import { getModuleManifest, resolveModelViews } from "../view_service.js";
@@ -23,7 +24,7 @@ const PAGE_SIZE = 20;
  * @returns {Function} destroy
  */
 export async function mountListController(container, params, env) {
-  const { module, model, view = "list", actionId, label } = params;
+  const { module, model, view = "list", actionId, label, extraDomain = null } = params;
 
   if (!module || !model) {
     console.warn("[list_controller] descripteur incomplet, retour à l'accueil :", params);
@@ -160,9 +161,22 @@ export async function mountListController(container, params, env) {
       });
     };
 
+    const onNavigate = (methodName, pickingTypeId) => {
+      const buildExtra = buildStockPickingTypeDomain(methodName);
+      if (!buildExtra) return; // méthode inconnue -> pas de navigation
+      const pickingType = allRecords.find((r) => r.id === pickingTypeId);
+      env.doAction({
+        tag: "list_view",
+        module,
+        model: "stock.picking",
+        extraDomain: [["picking_type_id", "=", pickingTypeId], ...buildExtra],
+        label: pickingType?.name || "Transferts",
+      });
+    };
+
     const viewEl =
       currentView === "kanban"
-        ? renderKanbanView(currentModelViews.kanban.arch, currentViewFieldsInfo, pageRecords, onRecordOpen)
+        ? renderKanbanView(currentModelViews.kanban.arch, currentViewFieldsInfo, pageRecords, onRecordOpen, onNavigate)
         : renderListView(currentModelViews.list.arch, currentViewFieldsInfo, pageRecords, onRecordOpen, model);
 
     listContainer._currentView = viewEl;
@@ -220,7 +234,7 @@ export async function mountListController(container, params, env) {
       }
     }
 
-    const listData = await getListRecordsSmart(model, apiKey, CONFIG.ODOO_BASE_URL, actionId);
+    const listData = await getListRecordsSmart(model, apiKey, CONFIG.ODOO_BASE_URL, actionId, extraDomain);
     // Applique les record rules (ir.rule) mises en cache par user_service.js
     // -- jusqu'ici récupérées mais jamais utilisées (voir audit rules_engine).
     const securityInfo = await getSecurityInfo(model);
