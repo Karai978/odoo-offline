@@ -22,7 +22,7 @@ const PAGE_SIZE = 20;
  * @returns {Function} destroy
  */
 export async function mountListController(container, params, env) {
-  const { module, model, view = "list", actionId, label, extraDomain = null } = params;
+    const { module, model, view = "list", actionId, label, extraDomain = null } = params;
 
   if (!module || !model) {
     console.warn("[list_controller] descripteur incomplet, retour à l'accueil :", params);
@@ -232,11 +232,8 @@ export async function mountListController(container, params, env) {
       }
     }
 
-    const listData = await getListRecordsSmart(model, apiKey, CONFIG.ODOO_BASE_URL, actionId);
-    // Applique les record rules (ir.rule) mises en cache par user_service.js
-    // -- jusqu'ici récupérées mais jamais utilisées (voir audit rules_engine).
-    const securityInfo = await getSecurityInfo(model);
-    allRecordsRaw = filterByRecordRule(model, listData.records || [], securityInfo);
+    const listData = await getListRecordsSmart(model, apiKey, CONFIG.ODOO_BASE_URL, actionId, extraDomain);
+    allRecordsRaw = listData.records || [];
     applySearchFilter();
     renderCurrentPage();
 
