@@ -53,11 +53,8 @@ export const stockPickingRules = [
       const moveLinesEntry = Object.values(documentGraph.lines || {}).find((l) => l.model === "stock.move");
       if (!moveLinesEntry) return deltas; // vue sans lignes de mouvement -- rien à calculer
 
-      // Repli si la vue du picking n'affiche pas location_id/
-      // location_dest_id au niveau racine (vue simplifiée) -- confirmé en
-      // pratique : ces champs ne sont pas toujours des colonnes visibles.
-      const pickingLocationDest = unwrapMany2one(picking.location_dest_id);
-      const pickingLocationSrc = unwrapMany2one(picking.location_id);
+      const locationDest = unwrapMany2one(picking.location_dest_id);
+      const locationSrc = unwrapMany2one(picking.location_id);
 
       for (const move of moveLinesEntry.rows) {
         const qtyField = QTY_DONE_FIELD_CANDIDATES.find((f) => f in move);
@@ -65,12 +62,6 @@ export const stockPickingRules = [
         if (!qty) continue;
 
         const productId = unwrapMany2one(move.product_id);
-
-        // Chaque mouvement porte sa PROPRE source/destination (plus précis
-        // que le picking racine, qui n'est qu'une valeur par défaut) --
-        // confirmé par les données réelles observées en debug.
-        const locationDest = unwrapMany2one(move.location_dest_id) || pickingLocationDest;
-        const locationSrc = unwrapMany2one(move.location_id) || pickingLocationSrc;
 
         // Mouvement de stock physique (double entrée : + à destination, - à
         // la source), qui que soit le sens réception/livraison.
