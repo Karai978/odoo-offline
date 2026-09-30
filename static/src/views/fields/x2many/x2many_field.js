@@ -518,7 +518,7 @@ export function renderOne2manyField(name, info, node, initialValue, parentValues
       : []
   );
 
-  const recomputeTotal = attachComputeEngine(tbody, totalRow, parentValues);
+  const recomputeTotal = attachComputeEngine(tbody, totalRow, parentValues, info.relation);
   wrapper._getTbody = () => tbody;
   wrapper._isOne2many = true;
 

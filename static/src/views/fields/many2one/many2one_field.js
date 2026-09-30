@@ -107,6 +107,10 @@ export function renderMany2oneField(name, info, node, initialValue) {
         e.preventDefault();
         input.value = record.display_name;
         hiddenId.value = record.id;
+        // Sélection faite en JS, donc aucun événement natif ne se déclenche
+        // tout seul — indispensable pour que attachLiveOnchange() (et
+        // attachLiveBusinessRules()) détectent le changement.
+        input.dispatchEvent(new Event("change", { bubbles: true }));
         closeDropdown();
       });
       li.appendChild(a);
@@ -130,6 +134,7 @@ export function renderMany2oneField(name, info, node, initialValue) {
           cachedRecords.push({ id: tmpRef, display_name: query });
           input.value = query;
           hiddenId.value = tmpRef;
+          input.dispatchEvent(new Event("change", { bubbles: true }));
         } catch (err) {
           console.error("Création locale impossible:", err);
           alert("Impossible de créer cet enregistrement localement.");

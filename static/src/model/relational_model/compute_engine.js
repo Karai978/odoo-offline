@@ -6,35 +6,45 @@
  */
 
 import { getReferenceRecords } from "../../core/name_service.js";
+import { computeRegistry } from "./business_rules_registry.js";
 
-function computeLineSubtotal(qty, price) {
-  return (qty || 0) * (price || 0);
-}
+// Cas connus livrés avec le moteur — avant, ces noms de champs étaient
+// devinés à l'aveugle pour N'IMPORTE QUEL sous-modèle (voir ancien code).
+// Ici, ils sont déclarés explicitement pour les deux seuls modèles
+// pour lesquels le calcul est réellement correct. Toute app métier peut
+// enregistrer d'autres modèles via computeRegistry.add(...) ailleurs.
+computeRegistry.add("sale.order.line", (rows) =>
+  rows.reduce((sum, r) => sum + (r.product_uom_qty || 0) * (r.price_unit || 0), 0)
+);
+computeRegistry.add("purchase.order.line", (rows) =>
+  rows.reduce((sum, r) => sum + (r.product_qty || 0) * (r.price_unit || 0), 0)
+);
+computeRegistry.add("account.move.line", (rows) =>
+  rows.reduce((sum, r) => sum + (r.quantity || 0) * (r.price_unit || 0), 0)
+);
 
-const QTY_FIELD_CANDIDATES = ["product_uom_qty", "product_qty", "quantity", "qty"];
-const PRICE_FIELD_CANDIDATES = ["price_unit"];
+/**
+ * Récupère les valeurs brutes de chaque ligne (une seule fois, sous forme
+ * de dict {champ: valeur}), puis délègue le calcul du total à la fonction
+ * enregistrée pour ce sous-modèle. Retourne null si aucune règle n'est
+ * connue — mieux vaut ne rien afficher qu'afficher un total probablement
+ * faux pour un modèle non prévu.
+ */
+function computeTotalFromRows(tbody, comodelName) {
+  const computeFn = computeRegistry.get(comodelName, null);
+  if (!computeFn) return null;
 
-function findFirstAvailableField(cellRefs, candidates) {
-  for (const name of candidates) {
-    if (cellRefs[name]) return name;
-  }
-  return null;
-}
+  const rows = Array.from(tbody.querySelectorAll("tr"))
+    .filter((tr) => tr._cellRefs)
+    .map((tr) => {
+      const values = {};
+      for (const [fieldName, ref] of Object.entries(tr._cellRefs)) {
+        values[fieldName] = parseFloat(ref.el.value) || 0;
+      }
+      return values;
+    });
 
-function computeTotalFromRows(tbody) {
-  let total = 0;
-  Array.from(tbody.querySelectorAll("tr")).forEach((tr) => {
-    if (!tr._cellRefs) return;
-
-    const qtyField = findFirstAvailableField(tr._cellRefs, QTY_FIELD_CANDIDATES);
-    const priceField = findFirstAvailableField(tr._cellRefs, PRICE_FIELD_CANDIDATES);
-
-    const qty = qtyField ? parseFloat(tr._cellRefs[qtyField].el.value) || 0 : 0;
-    const price = priceField ? parseFloat(tr._cellRefs[priceField].el.value) || 0 : 0;
-
-    total += computeLineSubtotal(qty, price);
-  });
-  return total;
+  return computeFn(rows);
 }
 
 function getCurrencySymbolInfo(currencyRecord) {
@@ -62,11 +72,15 @@ function formatMonetaryTotal(total, currencyInfo) {
  * @returns {Function} A manual recalculation function (e.g., after adding a
  * line via the product catalog).
  */
-export function attachComputeEngine(tbody, totalDisplayEl, parentValues) {
+export function attachComputeEngine(tbody, totalDisplayEl, parentValues, comodelName) {
   let currencyInfo = { symbol: "", position: "after" };
 
   function recompute() {
-    const total = computeTotalFromRows(tbody);
+    const total = computeTotalFromRows(tbody, comodelName);
+    if (total === null) {
+      totalDisplayEl.textContent = "";
+      return null;
+    }
     totalDisplayEl.textContent = formatMonetaryTotal(total, currencyInfo);
     return total;
   }

@@ -12,7 +12,8 @@ import { getReferenceRecordsSmart } from "../../core/name_service.js";
 import { getRecordSmart } from "../../core/record_cache.js";
 import { getSecurityInfo } from "../../core/user_service.js";
 import { renderFormView } from "./form_renderer.js";
-import { attachLiveBusinessRules } from "../../model/relational_model/relational_model.js";
+import { attachLiveBusinessRules, attachLiveOnchange } from "../../model/relational_model/relational_model.js";
+import { constraintsRegistry } from "../../model/relational_model/business_rules_registry.js";
 import { collectFormData } from "./form_serializer.js";
 import {
   queueAction,
@@ -45,6 +46,9 @@ export async function mountFormController(container, params, env) {
   let currentContainer = null;
   let currentFieldsInfo = null;
   let cleanupRules = () => {};
+  let cleanupOnchange = () => {};
+
+  const onchangeHelpers = { getReferenceRecordsSmart, getRecordSmart, apiKey, baseUrl: CONFIG.ODOO_BASE_URL };
 
   // NEW — promoted to closure variables (previously: local to the try
   // block) so that saveRecord() can rebuild the form after a
@@ -120,6 +124,7 @@ export async function mountFormController(container, params, env) {
     formEl.dataset.model = model;
     container.insertBefore(formEl, statusEl);
     cleanupRules = attachLiveBusinessRules(archXml, formEl, fieldsInfo);
+    cleanupOnchange = attachLiveOnchange(model, formEl, fieldsInfo, onchangeHelpers);
 
     currentContainer = formEl;
     currentFieldsInfo = fieldsInfo;
@@ -162,9 +167,11 @@ export async function mountFormController(container, params, env) {
     newFormEl.dataset.model = model;
 
     cleanupRules();
+    cleanupOnchange();
     currentContainer.replaceWith(newFormEl);
     currentContainer = newFormEl;
     cleanupRules = attachLiveBusinessRules(archXml, newFormEl, currentFieldsInfo);
+    cleanupOnchange = attachLiveOnchange(model, newFormEl, currentFieldsInfo, onchangeHelpers);
 
     cp.breadcrumbCurrent.textContent = freshRecord.name || `#${currentRecordId}`;
   }
@@ -235,6 +242,18 @@ export async function mountFormController(container, params, env) {
   async function saveRecord() {
     if (!currentContainer || !currentFieldsInfo) return;
     const formData = collectFormData(currentContainer, currentFieldsInfo);
+
+    // Filet local optionnel : ne remplace jamais la vraie contrainte Python
+    // côté serveur, sert juste à éviter un aller-retour inutile quand la
+    // règle est connue et enregistrée pour ce modèle.
+    const checkConstraint = constraintsRegistry.get(model, null);
+    if (checkConstraint) {
+      const errorMessage = checkConstraint(formData);
+      if (errorMessage) {
+        statusEl.textContent = errorMessage;
+        return;
+      }
+    }
 
     try {
       let localUuid;
@@ -308,5 +327,6 @@ export async function mountFormController(container, params, env) {
 
   return () => {
     cleanupRules();
+    cleanupOnchange();
   };
 }

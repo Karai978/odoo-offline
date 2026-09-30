@@ -8,6 +8,7 @@ import "./webclient/login.js";
 import { mountWebclient } from "./webclient/webclient.js";
 import "./views/view.js";
 import "./webclient/home_menu/home_menu.js";
+import "./business_rules/sale_order_rules.js";
 
 // Fusionné depuis core/browser/service_worker.js : chez Odoo l'enregistrement
 // du Service Worker se fait directement au boot, sans fichier dédié.
