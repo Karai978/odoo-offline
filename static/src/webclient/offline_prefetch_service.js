@@ -5,8 +5,9 @@
 import { fetchAndStoreModuleManifest } from "../views/view_service.js";
 import { fetchAndStoreListRecords, fetchAndStorePurchaseDashboard } from "../core/list_cache.js";
 import { fetchAndStoreRecord } from "../core/record_cache.js";
-import { fetchAndStoreReferenceRecords } from "../core/name_service.js";
+import { fetchAndStoreReferenceRecords, getReferenceRecords } from "../core/name_service.js";
 import { fetchAndStoreSecurityInfo } from "../core/user_service.js";
+import { fetchAndStoreCatalogProducts } from "../core/catalog_cache.js";
 
 export async function downloadFullApp(moduleName, apiKey, baseUrl, onProgress = () => {}) {
   onProgress(`Téléchargement du manifest de ${moduleName}...`);
@@ -38,16 +39,16 @@ export async function downloadFullApp(moduleName, apiKey, baseUrl, onProgress = 
     }
   }
 
-  // 1. Collection of Many2one relationships
+  // 1. Collection of Many2one AND Many2many relationships
   for (const modelName of models) {
     const fieldsInfo = manifest.fields[modelName] || {};
     for (const finfo of Object.values(fieldsInfo)) {
-      if (finfo.type === "many2one" && finfo.relation) {
+      if ((finfo.type === "many2one" || finfo.type === "many2many") && finfo.relation) {
         relationsToPreload.add(finfo.relation);
       }
       if (finfo.type === "one2many" && finfo.sub_fields) {
         for (const subInfo of Object.values(finfo.sub_fields)) {
-          if (subInfo.type === "many2one" && subInfo.relation) {
+          if ((subInfo.type === "many2one" || subInfo.type === "many2many") && subInfo.relation) {
             relationsToPreload.add(subInfo.relation);
           }
         }
@@ -99,6 +100,45 @@ export async function downloadFullApp(moduleName, apiKey, baseUrl, onProgress = 
       await fetchAndStoreReferenceRecords(relModel, apiKey, baseUrl);
     } catch (err) {
       console.warn(`Impossible de télécharger les relations de ${relModel}:`, err);
+    }
+  }
+
+  // 3bis. Downloading the product catalog (sale.order / purchase.order):
+  // once without partner_id (generic entry), then once per known partner
+  // (res.partner reference cache, populated by step 3 just above) — the
+  // catalog_cache key is "model::partnerId", so each combination needs
+  // its own fetch. NOTE: this can be heavy if there are many partners
+  // (one HTTP call per partner per model) — consider restricting to
+  // partners actually used on downloaded sale/purchase orders if the
+  // contact list is large.
+  const catalogModels = ["sale.order", "purchase.order"].filter((m) => models.includes(m));
+
+  if (catalogModels.length > 0) {
+    const knownPartners = relationsToPreload.has("res.partner")
+      ? await getReferenceRecords("res.partner")
+      : [];
+
+    let catalogIndex = 0;
+    const catalogTotal = catalogModels.length * (1 + knownPartners.length);
+
+    for (const catalogModel of catalogModels) {
+      catalogIndex++;
+      onProgress(`Catalogue produits ${catalogIndex}/${catalogTotal} : ${catalogModel} (général)...`);
+      try {
+        await fetchAndStoreCatalogProducts(catalogModel, null, apiKey, baseUrl);
+      } catch (err) {
+        console.warn(`Impossible de télécharger le catalogue pour ${catalogModel}:`, err);
+      }
+
+      for (const partner of knownPartners) {
+        catalogIndex++;
+        onProgress(`Catalogue produits ${catalogIndex}/${catalogTotal} : ${catalogModel} (${partner.display_name})...`);
+        try {
+          await fetchAndStoreCatalogProducts(catalogModel, partner.id, apiKey, baseUrl);
+        } catch (err) {
+          console.warn(`Impossible de télécharger le catalogue ${catalogModel} pour le partenaire ${partner.id}:`, err);
+        }
+      }
     }
   }
 
