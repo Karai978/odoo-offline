@@ -66,7 +66,6 @@ export function attachLiveBusinessRules(archXmlString, containerEl, fieldsInfo) 
  */
 export function attachLiveOnchange(model, containerEl, fieldsInfo, helpers) {
   const entries = onchangeRegistry.getEntries().filter(([key]) => key.startsWith(`${model}:`));
-  console.log("[onchange] attaché pour", model, "->", entries.map(([k]) => k));
   if (entries.length === 0) return () => {};
 
   function applyPatch(patch) {
