@@ -171,6 +171,20 @@ function mountHomeMenu(container, params, env) {
   refreshBtn.addEventListener("click", refreshInstalledApps);
 
   async function loadDashboardInfo() {
+    if (!navigator.onLine) {
+      const cachedProfile = await getCachedProfile();
+      const session = getSession();
+      if (cachedProfile) {
+        bus.trigger("user:info", {
+          initial: cachedProfile.initial,
+          name: cachedProfile.name,
+          companyName: cachedProfile.companyName,
+        });
+      } else if (session) {
+        bus.trigger("user:info", { initial: (session.name || "?")[0].toUpperCase(), name: session.name });
+      }
+      return;
+    }
     try {
       const response = await fetch(`${CONFIG.ODOO_BASE_URL}/offline_sync/dashboard_info`, {
         headers: { Authorization: `Bearer ${getApiKey()}` },
