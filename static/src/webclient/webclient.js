@@ -14,6 +14,7 @@ import { mountSyncStatusPanel } from "./navbar/sync_status_panel.js";
 import { mountConnectivityIndicator } from "./navbar/connectivity_indicator.js";
 import { mountConflictPanel } from "./navbar/conflict_panel.js"; 
 import { mountUserMenu } from "./user_menu/user_menu.js";
+import { mountAssistantPanel } from "./assistant/assistant_panel.js";
 import { loadOdooAssets, unloadOdooAssets } from "../core/assets.js";
 
 const NAVBAR_TEMPLATE = `
@@ -134,6 +135,7 @@ export function mountWebclient() {
   const actionService = createActionService(container);
 
   const syncStatusPanel = mountSyncStatusPanel(navbarRoot);
+  const assistantPanel = mountAssistantPanel(navbarRoot);
   mountConflictPanel(navbarRoot, actionService);
   mountConnectivityIndicator(navbarRoot);
   mountUserMenu(navbarRoot, actionService);
