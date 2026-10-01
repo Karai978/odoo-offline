@@ -5,6 +5,7 @@
  * explicite d'onchange/compute Python enregistrés dans business_rules_registry.js.
  * Importé une seule fois au démarrage dans main.js.
  */
+import { notify } from "../core/notification_service.js";
 import { onchangeRegistry, constraintsRegistry } from "../model/relational_model/business_rules_registry.js";
 
 // Équivalent de l'onchange partner_id -> payment_term_id
@@ -45,7 +46,7 @@ async function computeValidityDate(_changedValue, values, { getRecordSmart, apiK
 
 constraintsRegistry.add("sale.order", (values) => {
   if (values.commitment_date && values.date_order && values.commitment_date < values.date_order) {
-    return "La date d'engagement ne peut pas être antérieure à la date de commande.";
+    return notify({ type: "warning", message: "La date d'engagement ne peut pas être antérieure à la date de commande." });
   }
   return null;
 });
