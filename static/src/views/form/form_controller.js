@@ -9,7 +9,7 @@ import { bus } from "../../core/bus/bus_service.js";
 import { CONFIG, getApiKey } from "../../core/browser/session.js";
 import { getModuleManifest, resolveModelViews } from "../view_service.js";
 import { getReferenceRecordsSmart } from "../../core/name_service.js";
-import { getRecordSmart } from "../../core/record_cache.js";
+import { getRecordSmart, getCachedRecord } from "../../core/record_cache.js";
 import { getSecurityInfo } from "../../core/user_service.js";
 import { renderFormView } from "./form_renderer.js";
 import { attachLiveBusinessRules, attachLiveOnchange } from "../../model/relational_model/relational_model.js";
@@ -39,8 +39,12 @@ export async function mountFormController(container, params, env) {
 
   const apiKey = getApiKey();
 
-  let currentRecordId = id ? parseInt(id, 10) : null;
-  let pendingCreateUuid = null;
+  const isLocalId = typeof id === "string" && id.startsWith("local:");
+  let currentRecordId = id && !isLocalId ? parseInt(id, 10) : null;
+  // Fiche créée hors ligne, pas encore synchronisée : on la retrouve
+  // dans la file (sync_queue) via son UUID local plutôt que de la
+  // traiter comme un enregistrement serveur classique.
+  let pendingCreateUuid = isLocalId ? id.slice(6) : null;
   let currentReferenceWriteDate = null;
   let currentReferenceValues = {};
   let currentContainer = null;
@@ -115,6 +119,9 @@ export async function mountFormController(container, params, env) {
       currentReferenceWriteDate = initialValues.__reference_write_date__ || null;
       const { __reference_write_date__, ...cleanValues } = initialValues;
       currentReferenceValues = cleanValues;
+    } else if (pendingCreateUuid) {
+      // Pas d'appel réseau ici : cet ID n'existe que localement.
+      initialValues = (await getCachedRecord(model, id)) || {};
     }
 
     const securityInfo = await getSecurityInfo(model);
@@ -136,7 +143,9 @@ export async function mountFormController(container, params, env) {
 
     statusEl.textContent = navigator.onLine ? "" : "Mode hors-ligne — données mises en cache.";
 
-    const recordLabel = currentRecordId ? initialValues.name || `#${currentRecordId}` : "Nouveau";
+    const recordLabel = (currentRecordId || pendingCreateUuid)
+      ? initialValues.name || `#${currentRecordId || pendingCreateUuid}`
+      : "Nouveau";
     cp.breadcrumbCurrent.textContent = recordLabel;
   } catch (err) {
     console.error(err);

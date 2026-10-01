@@ -76,3 +76,37 @@ export async function getRecordSmart(modelName, recordId, apiKey, baseUrl) {
     return cached;
   }
 }
+
+/**
+ * Fusionne de nouvelles valeurs dans l'enregistrement caché pour
+ * modelName/recordId (crée l'entrée si elle n'existe pas encore — un
+ * enregistrement créé hors ligne n'a pas de snapshot préalable).
+ */
+export async function upsertLocalRecord(modelName, recordId, values) {
+  const existing = await db.record_cache.get([modelName, recordId]);
+  const merged = { ...(existing ? existing.data : {}), ...values, id: recordId };
+  await db.record_cache.put({
+    model: modelName,
+    record_id: recordId,
+    data: merged,
+    updated_at: new Date().toISOString(),
+  });
+  return merged;
+}
+
+/**
+ * Renomme la clé d'un enregistrement caché (ex. ID temporaire
+ * "local:<uuid>" -> ID Odoo réel) une fois que le serveur l'a attribué,
+ * après une synchronisation réussie.
+ */
+export async function replaceRecordId(modelName, oldId, newId) {
+  const existing = await db.record_cache.get([modelName, oldId]);
+  if (!existing) return;
+  await db.record_cache.delete([modelName, oldId]);
+  await db.record_cache.put({
+    model: modelName,
+    record_id: newId,
+    data: { ...existing.data, id: newId },
+    updated_at: new Date().toISOString(),
+  });
+}

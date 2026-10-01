@@ -126,3 +126,53 @@ export async function getPurchaseDashboardSmart(apiKey, baseUrl, actionId = null
     return cached ? cached.data : null;
   }
 }
+
+/**
+ * Une ligne list_cache est indexée par une clé composite basée sur le
+ * modèle (voir buildListCacheKey) : "model", "model::actionId" ou
+ * "model::actionId::domaine". Pour garder toutes les vues liste d'un
+ * modèle synchronisées, il faut retrouver toutes les lignes
+ * concernées par ce modèle.
+ */
+async function getListCacheEntriesForModel(modelName) {
+  const all = await db.list_cache.toArray();
+  return all.filter((entry) => entry.model === modelName || entry.model.startsWith(`${modelName}::`));
+}
+
+/**
+ * Insère ou met à jour un enregistrement dans toutes les listes mises
+ * en cache pour son modèle, pour qu'une création/modification hors
+ * ligne apparaisse immédiatement sans attendre un aller-retour serveur.
+ */
+export async function upsertRecordInAllLists(modelName, record) {
+  const entries = await getListCacheEntriesForModel(modelName);
+  for (const entry of entries) {
+    const idx = entry.records.findIndex((r) => r.id === record.id);
+    let newRecords;
+    let newTotal = entry.total;
+    if (idx >= 0) {
+      newRecords = [...entry.records];
+      newRecords[idx] = { ...newRecords[idx], ...record };
+    } else {
+      newRecords = [record, ...entry.records];
+      newTotal = (entry.total || entry.records.length) + 1;
+    }
+    await db.list_cache.put({ ...entry, records: newRecords, total: newTotal, updated_at: new Date().toISOString() });
+  }
+}
+
+/**
+ * Renomme l'ID d'un enregistrement dans toutes les listes en cache
+ * pour son modèle (ID temporaire "local:<uuid>" -> ID Odoo réel, une
+ * fois synchronisé).
+ */
+export async function replaceRecordIdInAllLists(modelName, oldId, newId) {
+  const entries = await getListCacheEntriesForModel(modelName);
+  for (const entry of entries) {
+    const idx = entry.records.findIndex((r) => r.id === oldId);
+    if (idx === -1) continue;
+    const newRecords = [...entry.records];
+    newRecords[idx] = { ...newRecords[idx], id: newId };
+    await db.list_cache.put({ ...entry, records: newRecords, updated_at: new Date().toISOString() });
+  }
+}

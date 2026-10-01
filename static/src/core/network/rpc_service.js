@@ -7,6 +7,8 @@
 
 import { CONFIG, getApiKey } from "../browser/session.js";
 import { db } from "../orm_service.js";
+import { upsertLocalRecord, replaceRecordId } from "../record_cache.js";
+import { upsertRecordInAllLists, replaceRecordIdInAllLists } from "../list_cache.js";
 
 /**
  * Generates a Universally Unique Identifier (UUID) on the client side 
@@ -46,7 +48,28 @@ export async function queueAction(
     status: "pending",
     created_at: new Date().toISOString().slice(0, 19).replace("T", " "),
   });
+  await applyOptimisticLocalUpdate(modelName, operation, payload, localUuid);
   return localUuid;
+}
+
+/**
+ * Applique immédiatement en local (record_cache + list_cache) le
+ * changement qui vient d'être mis en file, pour que la fiche créée ou
+ * modifiée hors ligne soit visible/ouvrable sans attendre la synchro.
+ * Ne concerne que "create"/"write" : "call_method" ne transporte pas
+ * de valeurs de champs exploitables ici.
+ */
+async function applyOptimisticLocalUpdate(modelName, operation, payload, localUuid) {
+  if (operation === "create") {
+    const tempId = `local:${localUuid}`;
+    const record = { ...payload, id: tempId };
+    await upsertLocalRecord(modelName, tempId, record);
+    await upsertRecordInAllLists(modelName, record);
+  } else if (operation === "write" && payload && payload.id !== undefined) {
+    const { id, ...values } = payload;
+    const record = await upsertLocalRecord(modelName, id, values);
+    await upsertRecordInAllLists(modelName, record);
+  }
 }
 
 /**
@@ -109,6 +132,9 @@ export async function syncPendingActions() {
         mappedStatus = "sent";
         if (localEntry.operation === "create" && result.odoo_record_id) {
           createdIds[localEntry.local_uuid] = result.odoo_record_id;
+          const tempId = `local:${localEntry.local_uuid}`;
+          await replaceRecordId(localEntry.model_name, tempId, result.odoo_record_id);
+          await replaceRecordIdInAllLists(localEntry.model_name, tempId, result.odoo_record_id);
         }
         if (result.requires_manual_action && result.pending_action) {
           manualActions[localEntry.local_uuid] = result.pending_action;
@@ -210,6 +236,7 @@ export async function amendPendingCreate(localUuid, payload) {
   await db.sync_queue.update(entry.id, {
     payload: JSON.stringify(payload),
   });
+  await applyOptimisticLocalUpdate(entry.model_name, "create", payload, localUuid);
   return true;
 }
 
