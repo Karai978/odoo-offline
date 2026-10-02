@@ -8,7 +8,7 @@ import { OfflineOrmEngine, OfflineUnsupportedError } from "./offline_orm";
 import { prepareOffline, syncNow } from "./sync_service";
 import { registerServiceWorker } from "../service_worker/register";
 import { stableStringify } from "../query/domain";
-import { makeOfflineActionCompatible } from "./offline_action";
+import { makeOfflineActionCompatible, mergeOfflineNativeViews } from "./offline_action";
 
 let currentRuntime = null;
 const READ_METHODS = new Set([
@@ -240,10 +240,17 @@ export class OfflineRuntime {
                 if (params.additional_context && result.context && typeof result.context === "object") {
                     result.context = { ...result.context, ...params.additional_context };
                 }
-                const manifest = result.res_model
-                    ? await this.database.getManifest(result.res_model, params.action_id)
-                    : null;
-                return makeOfflineActionCompatible(result, manifest?.native_views);
+                const [manifest, defaultManifest] = result.res_model
+                    ? await Promise.all([
+                        this.database.getManifest(result.res_model, params.action_id),
+                        this.database.getManifest(result.res_model),
+                    ])
+                    : [null, null];
+                const nativeViews = mergeOfflineNativeViews(
+                    defaultManifest?.native_views,
+                    manifest?.native_views
+                );
+                return makeOfflineActionCompatible(result, nativeViews);
             }
         }
         const button = parseButtonCall(route, params);

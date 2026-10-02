@@ -18,6 +18,30 @@ function searchViewId(action) {
     return value;
 }
 
+export function mergeOfflineNativeViews(defaultViews, actionViews) {
+    const defaults = defaultViews || {};
+    const action = actionViews || {};
+    const models = {};
+    for (const modelName of new Set([
+        ...Object.keys(defaults.models || {}),
+        ...Object.keys(action.models || {}),
+    ])) {
+        const defaultModel = defaults.models?.[modelName] || {};
+        const actionModel = action.models?.[modelName] || {};
+        models[modelName] = {
+            ...defaultModel,
+            ...actionModel,
+            fields: { ...(defaultModel.fields || {}), ...(actionModel.fields || {}) },
+        };
+    }
+    return {
+        ...defaults,
+        ...action,
+        models,
+        views: { ...(defaults.views || {}), ...(action.views || {}) },
+    };
+}
+
 /** Replace unsupported or unavailable action views with the cached native view. */
 export function makeOfflineActionCompatible(action, nativeViews) {
     const viewsByType = nativeViews?.views;

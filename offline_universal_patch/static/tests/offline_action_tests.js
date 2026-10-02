@@ -1,6 +1,6 @@
 /** @odoo-module **/
 
-import { makeOfflineActionCompatible } from "../src/services/offline_action";
+import { makeOfflineActionCompatible, mergeOfflineNativeViews } from "../src/services/offline_action";
 
 QUnit.module("offline_universal_patch.offline_action");
 
@@ -20,6 +20,29 @@ QUnit.test("keeps cached native views and removes unsupported pivot and graph mo
     assert.strictEqual(result.view_mode, "list,form");
     assert.notOk("group_by" in result.context);
     assert.strictEqual(result.context.search_default_confirmed, 1);
+});
+
+QUnit.test("merges action-specific search views with default fallback views", (assert) => {
+    const nativeViews = mergeOfflineNativeViews(
+        {
+            models: { "sale.order": { fields: { name: { type: "char" } } } },
+            views: { list: { id: 4 }, form: { id: 5 }, search: { id: false } },
+        },
+        {
+            models: { "sale.order": { fields: { custom: { type: "char" } } } },
+            views: { search: { id: 99 } },
+        }
+    );
+    const action = makeOfflineActionCompatible({
+        res_model: "sale.order",
+        views: [[false, "pivot"]],
+        search_view_id: [99, "Custom Search"],
+    }, nativeViews);
+
+    assert.deepEqual(action.views, [[false, "list"]]);
+    assert.strictEqual(action.search_view_id[0], 99);
+    assert.ok(nativeViews.models["sale.order"].fields.name);
+    assert.ok(nativeViews.models["sale.order"].fields.custom);
 });
 
 QUnit.test("falls back to a cached list and clears unsupported pivot grouping", (assert) => {
