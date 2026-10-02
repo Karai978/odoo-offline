@@ -8,6 +8,24 @@ DEFAULT_PAGE_SIZE = 200
 MAX_PAGE_SIZE = 500
 
 
+def _snapshot_field_names(model, include_binary):
+    fields_info = model.fields_get(attributes=FIELD_ATTRIBUTES)
+    field_names = []
+    for name in fields_info:
+        field = model._fields.get(name)
+        if not field or not field.store:
+            # Non-stored computed fields may execute arbitrary server-side code
+            # (and access models the current user cannot read) on every read.
+            # They cannot be faithfully snapshotted as static offline values.
+            continue
+        if field.type == "binary" and not include_binary:
+            continue
+        field_names.append(name)
+    if "id" not in field_names:
+        field_names.insert(0, "id")
+    return field_names
+
+
 class SnapshotService:
     @staticmethod
     def page(env, model_name, offset=0, limit=DEFAULT_PAGE_SIZE, include_binary=False):
@@ -22,19 +40,7 @@ class SnapshotService:
         except (TypeError, ValueError):
             raise UserError("Invalid snapshot page parameters.")
 
-        fields_info = model.fields_get(attributes=FIELD_ATTRIBUTES)
-        field_names = []
-        for name in fields_info:
-            field = model._fields.get(name)
-            if not field:
-                continue
-            # Binary values can dominate device storage. The caller opts in for
-            # them explicitly; all other readable fields are returned.
-            if field.type == "binary" and not include_binary:
-                continue
-            field_names.append(name)
-        if "id" not in field_names:
-            field_names.insert(0, "id")
+        field_names = _snapshot_field_names(model, include_binary)
 
         total = model.search_count([])
         records = model.search([], offset=offset, limit=limit, order="id asc")
@@ -60,12 +66,5 @@ class SnapshotService:
         record = model.browse(int(record_id)).exists()
         if not record:
             return None
-        fields_info = model.fields_get(attributes=FIELD_ATTRIBUTES)
-        fields_to_read = []
-        for name in fields_info:
-            field = model._fields.get(name)
-            if field and (include_binary or field.type != "binary"):
-                fields_to_read.append(name)
-        if "id" not in fields_to_read:
-            fields_to_read.insert(0, "id")
+        fields_to_read = _snapshot_field_names(model, include_binary)
         return json_safe(record.read(fields_to_read, load=None)[0])

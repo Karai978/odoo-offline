@@ -3,7 +3,7 @@ from odoo.exceptions import AccessError
 from odoo.tests import TransactionCase, tagged
 
 from ..services.manifest_service import ManifestService
-from ..services.snapshot_service import SnapshotService
+from ..services.snapshot_service import SnapshotService, _snapshot_field_names
 
 
 @tagged("post_install", "-at_install")
@@ -25,6 +25,13 @@ class TestOfflineSnapshot(TransactionCase):
         self.assertLessEqual(len(page["records"]), 2)
         self.assertGreaterEqual(page["total"], len(partners))
         self.assertIn("id", page["records"][0])
+
+    def test_snapshot_omits_nonstored_computed_fields(self):
+        model = self.env["res.partner"]
+        field_names = _snapshot_field_names(model, include_binary=True)
+        self.assertIn("name", field_names)
+        self.assertFalse(model._fields["display_name"].store)
+        self.assertNotIn("display_name", field_names)
 
     def test_snapshot_rejects_internal_models(self):
         with self.assertRaises(AccessError):
