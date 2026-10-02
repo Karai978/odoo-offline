@@ -81,6 +81,9 @@ export async function registerServiceWorker(owner = null, resources = {}) {
         const userResult = owner
             ? await postMessageAndWait(worker, { type: "PRECACHE_USER_URLS", owner, urls: resources.userUrls || [] })
             : { failures: [] };
+        const menuResult = owner && resources.offlineMenus
+            ? await postMessageAndWait(worker, { type: "CACHE_OFFLINE_MENUS", owner, menus: resources.offlineMenus })
+            : { ok: true };
         let shellCached = false;
         if (owner && navigator.onLine) {
             const response = await fetch("/web", { credentials: "same-origin", cache: "no-store" });
@@ -99,6 +102,7 @@ export async function registerServiceWorker(owner = null, resources = {}) {
             assetsCached: assetsResult?.cached || 0,
             assetFailures: assetsResult?.failures || [],
             userFailures: userResult?.failures || [],
+            menuFailure: menuResult?.ok === false ? menuResult.error || "Les menus hors ligne n'ont pas pu être enregistrés." : null,
         };
     } catch (error) {
         console.warn("Could not prepare the Odoo offline service worker.", error);

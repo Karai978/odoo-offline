@@ -5,6 +5,7 @@ const META_CACHE = `${CACHE_PREFIX}-meta`;
 const SHELL_PREFIX = `${CACHE_PREFIX}-shell-`;
 const OWNER_KEY = new URL("/__offline_universal__/owner", self.location.origin).toString();
 const SHELL_KEY = new URL("/__offline_universal__/shell", self.location.origin).toString();
+const OFFLINE_MENUS_KEY = new URL("/__offline_universal__/menus", self.location.origin).toString();
 
 self.addEventListener("install", (event) => {
     event.waitUntil(self.skipWaiting());
@@ -131,6 +132,14 @@ self.addEventListener("message", (event) => {
                     }
                 }
                 result = { ok: failures.length === 0, cached, failures };
+            } else if (message.type === "CACHE_OFFLINE_MENUS" && message.owner && message.menus) {
+                if (await readOwner() !== message.owner) {
+                    throw new Error("Le propriétaire du cache offline ne correspond pas à la session.");
+                }
+                const cache = await caches.open(ownerCacheName(message.owner));
+                await cache.put(OFFLINE_MENUS_KEY, new Response(JSON.stringify(message.menus), {
+                    headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" },
+                }));
             } else if (message.type === "CACHE_SHELL" && message.owner && typeof message.html === "string") {
                 if (ownerFromHtml(message.html) !== message.owner) {
                     throw new Error("Le shell renvoyé ne correspond pas à l'utilisateur connecté.");
@@ -208,6 +217,17 @@ self.addEventListener("fetch", (event) => {
             const owner = await readOwner();
             if (!owner) return new Response("Ressource utilisateur absente du cache offline.", { status: 503 });
             const cache = await caches.open(ownerCacheName(owner));
+            if (url.pathname.startsWith("/web/webclient/load_menus/")) {
+                try {
+                    const response = await fetch(request);
+                    if (response.ok) await cache.put(request, response.clone());
+                    return response;
+                } catch {
+                    const scopedMenus = await cache.match(OFFLINE_MENUS_KEY);
+                    if (scopedMenus) return scopedMenus;
+                    return await cache.match(request) || new Response("Menus Odoo absents du cache offline.", { status: 503 });
+                }
+            }
             const cached = await cache.match(request);
             if (cached) {
                 fetch(request, { credentials: "same-origin" }).then((response) => {

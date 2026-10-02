@@ -28,6 +28,8 @@
             "offline_universal_patch/static/src/patches/rpc_service_patch.js",
             "offline_universal_patch/static/src/service_worker/register.js",
             "offline_universal_patch/static/src/components/offline_status.xml",
+            "offline_universal_patch/static/src/components/offline_app_selection_dialog.xml",
+            "offline_universal_patch/static/src/components/offline_app_selection_dialog.js",
             "offline_universal_patch/static/src/components/offline_status.js",
             "offline_universal_patch/static/src/components/offline_status.scss",
         ],

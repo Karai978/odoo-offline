@@ -4,9 +4,12 @@ import { Component, onWillUnmount, useState } from "@odoo/owl";
 import { registry } from "@web/core/registry";
 import { useBus, useService } from "@web/core/utils/hooks";
 
+import { OfflineAppSelectionDialog } from "./offline_app_selection_dialog";
+
 export class OfflineUniversalStatus extends Component {
     setup() {
         this.offline = useService("offline_universal");
+        this.dialog = useService("dialog");
         this.state = useState({
             online: navigator.onLine,
             ready: false,
@@ -14,6 +17,7 @@ export class OfflineUniversalStatus extends Component {
             pending: 0,
             conflicts: 0,
             errors: 0,
+            apps: [],
             message: "",
         });
         this.refresh();
@@ -52,7 +56,9 @@ export class OfflineUniversalStatus extends Component {
         if (!this.state.online) return this.state.ready ? "Hors ligne" : "Hors ligne — non préparé";
         if (!this.state.ready) return "Préparer offline";
         if (this.state.errors || this.state.conflicts) return "Synchronisation à vérifier";
-        return "Cache hors ligne prêt";
+        return this.state.apps.length
+            ? `Cache prêt (${this.state.apps.length} app(s))`
+            : "Cache hors ligne prêt";
     }
 
     async refresh() {
@@ -62,6 +68,7 @@ export class OfflineUniversalStatus extends Component {
             this.state.pending = summary.pending;
             this.state.conflicts = summary.conflict;
             this.state.errors = summary.error;
+            this.state.apps = summary.apps || [];
         } catch (error) {
             this.state.message = error.message;
         }
@@ -69,18 +76,53 @@ export class OfflineUniversalStatus extends Component {
 
     async onClick() {
         if (this.state.busy) return;
+        if (!this.state.ready) {
+            await this.openAppSelector();
+            return;
+        }
         this.state.busy = true;
         this.state.message = "";
         try {
-            if (!this.state.ready) {
-                await this.offline.prepare();
-            } else {
-                await this.offline.sync();
-            }
+            await this.offline.sync();
             await this.refresh();
-            this.state.message = "Opération terminée.";
+            this.state.message = "Synchronisation terminée.";
         } catch (error) {
-            this.state.message = error.message || "Erreur offline.";
+            this.state.message = error.message || "Erreur de synchronisation.";
+        } finally {
+            this.state.busy = false;
+        }
+    }
+
+    async onManageAppsClick() {
+        if (!this.state.busy) await this.openAppSelector();
+    }
+
+    async openAppSelector() {
+        this.state.busy = true;
+        this.state.message = "Chargement des apps Odoo…";
+        try {
+            const catalog = await this.offline.getAppCatalog();
+            if (!catalog.apps?.length) throw new Error("Aucune app Odoo accessible n'a été trouvée.");
+            this.dialog.add(OfflineAppSelectionDialog, {
+                apps: catalog.apps,
+                initialSelected: this.state.apps.filter((id) => catalog.apps.some((app) => String(app.id) === String(id))),
+                onConfirm: async (appIds) => {
+                    this.state.busy = true;
+                    this.state.message = "";
+                    try {
+                        await this.offline.prepare(appIds, catalog);
+                        await this.refresh();
+                        this.state.message = "Cache des apps préparé.";
+                    } catch (error) {
+                        this.state.message = error.message || "La préparation offline a échoué.";
+                        throw error;
+                    } finally {
+                        this.state.busy = false;
+                    }
+                },
+            });
+        } catch (error) {
+            this.state.message = error.message || "Impossible de charger les apps.";
         } finally {
             this.state.busy = false;
         }

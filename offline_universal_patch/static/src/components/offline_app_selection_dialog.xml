@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<templates xml:space="preserve">
+    <t t-name="offline_universal_patch.OfflineAppSelectionDialog">
+        <Dialog title="'Préparer des apps pour le mode hors ligne'" size="'lg'">
+            <div class="o_offline_app_selection">
+                <p>Sélectionnez les apps à préparer sur cet appareil. Les données des modèles directement ciblés par leurs actions restent limitées aux droits de votre utilisateur.</p>
+                <div class="d-flex gap-2 mb-2">
+                    <button type="button" class="btn btn-link btn-sm p-0" t-on-click="selectAll">Tout sélectionner</button>
+                    <button type="button" class="btn btn-link btn-sm p-0" t-on-click="clearSelection">Tout désélectionner</button>
+                </div>
+                <div class="list-group">
+                    <label t-foreach="props.apps" t-as="app" t-key="app.id"
+                           class="list-group-item d-flex align-items-center gap-2">
+                        <input class="form-check-input" type="checkbox"
+                               t-att-checked="state.selected.includes(app.id)"
+                               t-on-change="() => this.toggle(app.id)"/>
+                        <span class="flex-grow-1" t-esc="app.name"/>
+                        <small class="text-muted" t-esc="app.model_names.length + ' modèle(s)'"/>
+                    </label>
+                </div>
+                <div t-if="state.error" class="alert alert-danger mt-3" role="alert" t-esc="state.error"/>
+                <p class="text-muted mt-3 mb-0">La préparation inclut les menus, vues et données des modèles associés aux actions des apps sélectionnées. Les dépendances relationnelles et méthodes métier ne sont pas toutes couvertes.</p>
+            </div>
+            <t t-set-slot="footer">
+                <button type="button" class="btn btn-primary"
+                        t-att-disabled="state.busy || !state.selected.length"
+                        t-on-click="confirm">
+                    <t t-esc="state.busy ? 'Préparation…' : 'Préparer la sélection'"/>
+                </button>
+                <button type="button" class="btn btn-secondary" t-att-disabled="state.busy" t-on-click="props.close">
+                    Annuler
+                </button>
+            </t>
+        </Dialog>
+    </t>
+</templates>

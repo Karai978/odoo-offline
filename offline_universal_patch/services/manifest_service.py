@@ -57,6 +57,31 @@ class ManifestService:
             for model_name in sorted(names)
         ]
 
+        apps = []
+        root = menus.get("root") or {}
+        for menu_id in root.get("children", []):
+            app_menu = menus.get(menu_id) or menus.get(str(menu_id))
+            if not app_menu:
+                continue
+            app_id = str(app_menu.get("appID") or menu_id)
+            action_ids = {
+                str(menu.get("actionID"))
+                for menu in menus.values()
+                if str(menu.get("appID")) == app_id and menu.get("actionID")
+            }
+            app_models = sorted({
+                actions[action_id].get("res_model")
+                for action_id in action_ids
+                if action_id in actions and actions[action_id].get("res_model") in names
+            })
+            apps.append({
+                "id": app_id,
+                "menu_id": menu_id,
+                "name": app_menu.get("name") or app_id,
+                "action_ids": sorted(action_ids),
+                "model_names": app_models,
+            })
+
         Change = env["offline.universal.change"].sudo()
         last_change = Change.search([], order="id desc", limit=1)
         user = env.user
@@ -75,6 +100,7 @@ class ManifestService:
                 "context": json_safe(dict(env.context)),
             },
             "models": models,
+            "apps": apps,
             "menus": json_safe(menus),
             "actions": actions,
             "cursor": last_change.id if last_change else 0,

@@ -6,8 +6,9 @@ Addon unique `offline_universal_patch`, dépendant uniquement de `web`. Il intè
 
 Cette version est un **socle expérimental, pas une couverture universelle prête pour la production**.
 
-- Le bootstrap énumère les modèles lisibles, les menus/actions, les champs, les vues natives list/form/kanban/search et pagine un snapshot respectant l'environnement de l'utilisateur.
-- Le client met en cache les données autorisées (y compris les champs binaires demandés), exécute localement un sous-ensemble ORM/CRUD, conserve une outbox avec UUID idempotents, traite les changements et signale les divergences de `write_date`.
+- Le bouton systray permet de sélectionner une ou plusieurs apps visibles de l'utilisateur. Les menus hors ligne sont limités à la sélection ; le snapshot prépare les modèles directement ciblés par leurs actions de fenêtre et leurs vues natives list/form/kanban/search.
+- Pour chaque modèle directement ciblé, le snapshot prend tous les enregistrements autorisés et demande les champs binaires, par pages de 200. Les modèles liés qui ne sont pas directement ciblés par une action ne sont pas encore calculés comme dépendances complètes : une sélection Ventes/Achats peut donc manquer des données nécessaires à certains formulaires ou champs relationnels.
+- Le client conserve les données préparées dans IndexedDB, exécute localement un sous-ensemble ORM/CRUD, conserve une outbox avec UUID idempotents, traite les changements limités aux modèles sélectionnés et signale les divergences de `write_date`.
 - Le service worker prépare le shell et les assets déjà rencontrés, puis met en cache les réponses `/web/image` et `/web/content` par utilisateur lorsqu'elles sont consultées en ligne.
 - Les capacités `base`, `sale`, `purchase`, `stock`, `mail` et `custom` sont seulement des points d'extension vides. **Aucun bouton métier d'addon n'est actuellement enregistré** : une méthode sans handler local explicite échoue hors ligne au lieu d'être simulée.
 - Les domaines, regroupements, onchange, widgets, vues autres que list/form/kanban/search, appels externes et politiques de conflit ne sont pas en parité complète avec Odoo. Les domaines hiérarchiques et certains regroupements (dates, many2many) sont refusés explicitement.

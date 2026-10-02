@@ -12,6 +12,14 @@
                 <span t-if="state.pending" class="badge rounded-pill text-bg-warning ms-1" t-esc="state.pending"/>
                 <span t-if="state.conflicts" class="badge rounded-pill text-bg-danger ms-1" t-esc="state.conflicts"/>
             </button>
+            <button t-if="state.ready" type="button" class="btn btn-link o_offline_universal_apps_button"
+                    title="Choisir les apps préparées hors ligne"
+                    aria-label="Choisir les apps préparées hors ligne"
+                    t-att-disabled="state.busy"
+                    t-on-click="onManageAppsClick">
+                <i class="fa fa-th-large" aria-hidden="true"/>
+                <span class="visually-hidden">Apps offline</span>
+            </button>
         </div>
     </t>
 </templates>

@@ -2,7 +2,7 @@
 
 **Statut :** cadrage et critères d'acceptation. Un prototype de l'addon `offline_universal_patch` existe maintenant, mais il ne satisfait pas encore la couverture universelle et n'est pas prêt pour la production.
 
-**Périmètre confirmé par le métier :** toutes les apps et tous les modèles ; vues liste, formulaire et kanban ; lecture, création, modification et suppression ; boutons et méthodes métier exécutés localement pendant la déconnexion ; toutes les données.
+**Cible fonctionnelle initiale :** toutes les apps et tous les modèles ; vues liste, formulaire et kanban ; lecture, création, modification et suppression ; boutons et méthodes métier exécutés localement pendant la déconnexion ; toutes les données. **Évolution du parcours de préparation :** l'utilisateur doit pouvoir choisir une ou plusieurs apps (par exemple Ventes et Achats) plutôt que télécharger toute la base d'un coup. Cela ne réduit pas les exigences de couverture d'une app sélectionnée ni ne rend ses méthodes métier automatiquement disponibles hors ligne.
 
 Ce document s'appuie sur l'audit du dépôt PWA présent et sur l'inspection du webclient Odoo 17. L'état de code courant et ses limites sont récapitulés dans `offline_universal_patch/README.md`.
 

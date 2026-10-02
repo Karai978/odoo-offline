@@ -134,7 +134,11 @@ export class OfflineRuntime {
     }
 
     async ensureOfflineShell() {
-        const result = await registerServiceWorker(this.getOwner(), this.getWorkerResources());
+        const catalog = await this.database.getMeta("catalog");
+        const result = await registerServiceWorker(this.getOwner(), {
+            ...this.getWorkerResources(),
+            offlineMenus: catalog?.menus || null,
+        });
         if (!result?.registration?.active || !result.shellCached) {
             throw new Error("Le shell Odoo n'a pas pu être préparé pour le rechargement hors ligne. Vérifiez HTTPS et le service worker.");
         }
@@ -144,6 +148,7 @@ export class OfflineRuntime {
         if (result.userFailures?.length) {
             throw new Error(`${result.userFailures.length} ressource(s) utilisateur Odoo n'ont pas pu être mises en cache.`);
         }
+        if (result.menuFailure) throw new Error(result.menuFailure);
         this.serviceWorkerPromise = Promise.resolve(result);
         return result;
     }
@@ -166,8 +171,13 @@ export class OfflineRuntime {
         return deviceUuid;
     }
 
-    async prepare() {
-        const result = await prepareOffline(this);
+    async getAppCatalog() {
+        const deviceUuid = await this.getDeviceUuid();
+        return this.rpc("/offline_universal_patch/bootstrap", { device_uuid: deviceUuid });
+    }
+
+    async prepare(appIds, catalog) {
+        const result = await prepareOffline(this, { appIds, catalog });
         navigator.serviceWorker?.controller?.postMessage({ type: "SET_OWNER", owner: this.getOwner() });
         return result;
     }
@@ -186,6 +196,7 @@ export class OfflineRuntime {
         summary.ready = !!(await this.database.getMeta("offline_ready"));
         summary.online = !this.isOffline();
         summary.preparedAt = await this.database.getMeta("prepared_at");
+        summary.apps = (await this.database.getMeta("offline_scope"))?.apps || [];
         return summary;
     }
 
@@ -331,8 +342,9 @@ export const offlineUniversalService = {
             console.warn("Offline storage is unavailable; Odoo will continue online.", error);
             return {
                 async getSummary() {
-                    return { ready: false, online: navigator.onLine, pending: 0, conflict: 0, error: 0, preparedAt: null };
+                    return { ready: false, online: navigator.onLine, pending: 0, conflict: 0, error: 0, preparedAt: null, apps: [] };
                 },
+                async getAppCatalog() { throw new Error(`Stockage offline indisponible : ${error.message}`); },
                 async prepare() { throw new Error(`Stockage offline indisponible : ${error.message}`); },
                 async sync() { throw new Error(`Stockage offline indisponible : ${error.message}`); },
             };
