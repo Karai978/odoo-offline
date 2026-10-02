@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<templates xml:space="preserve">
+    <t t-name="offline_universal_patch.OfflineStatus">
+        <div class="o_offline_universal_status d-flex align-items-center">
+            <button type="button"
+                    class="btn btn-link o_offline_universal_button"
+                    t-att-title="state.message || 'Mode hors ligne universel'"
+                    t-att-disabled="state.busy"
+                    t-on-click="onClick">
+                <i t-att-class="state.online ? 'fa fa-cloud' : 'fa fa-cloud-download'" aria-hidden="true"/>
+                <span class="ms-1" t-esc="label"/>
+                <span t-if="state.pending" class="badge rounded-pill text-bg-warning ms-1" t-esc="state.pending"/>
+                <span t-if="state.conflicts" class="badge rounded-pill text-bg-danger ms-1" t-esc="state.conflicts"/>
+            </button>
+        </div>
+    </t>
+</templates>

@@ -1,0 +1,4 @@
+id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
+access_offline_universal_device_system,offline.universal.device system,model_offline_universal_device,base.group_system,1,1,1,1
+access_offline_universal_receipt_system,offline.universal.receipt system,model_offline_universal_receipt,base.group_system,1,1,1,1
+access_offline_universal_change_system,offline.universal.change system,model_offline_universal_change,base.group_system,1,1,1,1

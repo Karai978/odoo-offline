@@ -1,0 +1,42 @@
+# -*- coding: utf-8 -*-
+{
+    "name": "Universal Offline Patch",
+    "summary": "Offline-first native Odoo 17 web client",
+    "version": "17.0.1.0.0",
+    "category": "Technical",
+    "license": "LGPL-3",
+    "depends": ["web"],
+    "data": [
+        "security/ir.model.access.csv",
+    ],
+    "assets": {
+        "web.assets_backend": [
+            "offline_universal_patch/static/src/database/database.js",
+            "offline_universal_patch/static/src/query/domain.js",
+            "offline_universal_patch/static/src/capabilities/registry.js",
+            "offline_universal_patch/static/src/capabilities/base/index.js",
+            "offline_universal_patch/static/src/capabilities/sale/index.js",
+            "offline_universal_patch/static/src/capabilities/purchase/index.js",
+            "offline_universal_patch/static/src/capabilities/stock/index.js",
+            "offline_universal_patch/static/src/capabilities/mail/index.js",
+            "offline_universal_patch/static/src/capabilities/custom/index.js",
+            "offline_universal_patch/static/src/services/offline_orm.js",
+            "offline_universal_patch/static/src/services/runtime.js",
+            "offline_universal_patch/static/src/patches/webclient_service_worker_patch.js",
+            "offline_universal_patch/static/src/services/sync_service.js",
+            "offline_universal_patch/static/src/patches/orm_service_patch.js",
+            "offline_universal_patch/static/src/patches/rpc_service_patch.js",
+            "offline_universal_patch/static/src/service_worker/register.js",
+            "offline_universal_patch/static/src/components/offline_status.xml",
+            "offline_universal_patch/static/src/components/offline_status.js",
+            "offline_universal_patch/static/src/components/offline_status.scss",
+        ],
+        "web.qunit_suite_tests": [
+            "offline_universal_patch/static/src/query/domain.js",
+            "offline_universal_patch/static/tests/domain_tests.js",
+        ],
+    },
+    "installable": True,
+    "application": False,
+    "auto_install": False,
+}
