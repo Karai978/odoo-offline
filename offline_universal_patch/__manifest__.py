@@ -21,6 +21,7 @@
             "offline_universal_patch/static/src/capabilities/mail/index.js",
             "offline_universal_patch/static/src/capabilities/custom/index.js",
             "offline_universal_patch/static/src/services/offline_orm.js",
+            "offline_universal_patch/static/src/services/offline_action.js",
             "offline_universal_patch/static/src/services/runtime.js",
             "offline_universal_patch/static/src/patches/webclient_service_worker_patch.js",
             "offline_universal_patch/static/src/services/sync_service.js",
@@ -36,8 +37,10 @@
         ],
         "web.qunit_suite_tests": [
             "offline_universal_patch/static/src/query/domain.js",
+            "offline_universal_patch/static/src/services/offline_action.js",
             "offline_universal_patch/static/src/patches/tax_totals_guard.js",
             "offline_universal_patch/static/tests/domain_tests.js",
+            "offline_universal_patch/static/tests/offline_action_tests.js",
             "offline_universal_patch/static/tests/tax_totals_guard_tests.js",
         ],
     },
