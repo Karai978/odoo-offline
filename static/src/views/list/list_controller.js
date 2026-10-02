@@ -14,6 +14,7 @@ import { renderListView } from "./list_renderer.js";
 import { renderKanbanView } from "../kanban/kanban_renderer.js";
 import { renderPurchaseDashboard, buildPurchaseDashboardDomain } from "../purchase_dashboard.js";
 import { buildControlPanel, renderViewSwitcherButtons } from "../../search/control_panel/control_panel.js";
+import { notify } from "../../core/notification_service.js";
 
 const PAGE_SIZE = 20;
 
@@ -76,11 +77,11 @@ export async function mountListController(container, params, env) {
     if ((currentPage + 1) * PAGE_SIZE < allRecords.length) { currentPage++; renderCurrentPage(); }
   });
 
-  // Status bar
-  const statusEl = document.createElement("div");
-  statusEl.className = "text-muted small px-3 py-1";
-  statusEl.textContent = "Chargement de la liste...";
-  container.appendChild(statusEl);
+  const closeLoading = notify({
+    type: "info",
+    message: "Loading...",
+  });
+
 
   const listContainer = document.createElement("div");
   listContainer.id = "list-container";
@@ -188,7 +189,11 @@ export async function mountListController(container, params, env) {
     currentViewFieldsInfo = manifest.fields[model];
 
     if (!currentModelViews) {
-      statusEl.textContent = `Aucune vue disponible pour "${model}".`;
+      closeLoading();
+      notify({
+        type: "warning",
+        message: `Aucune vue disponible pour "${model}".`,
+      });
       return cleanup;
     }
 
@@ -206,7 +211,6 @@ export async function mountListController(container, params, env) {
       placeholder.className = "text-center text-muted p-5";
       placeholder.textContent = `Vue ${currentView === "pivot" ? "Pivot" : "Graphique"} : à venir.`;
       listContainer.appendChild(placeholder);
-      statusEl.textContent = "";
       return cleanup;
     }
 
@@ -237,10 +241,22 @@ export async function mountListController(container, params, env) {
     applySearchFilter();
     renderCurrentPage();
 
-    statusEl.textContent = navigator.onLine ? "" : "Mode hors-ligne — liste mise en cache.";
+    closeLoading();
+
+    if (!navigator.onLine) {
+      notify({
+        type: "info",
+        message: "Mode hors-ligne — liste mise en cache.",
+      });
+    }
+
   } catch (err) {
+    closeLoading();
     console.error(err);
-    statusEl.textContent = "Erreur : " + err.message;
+    notify({
+      type: "danger",
+      message: "Erreur : " + err.message,
+    });
   }
 
   function cleanup() {

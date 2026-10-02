@@ -23,6 +23,7 @@ import {
   getSyncQueueEntry,
 } from "../../core/network/rpc_service.js";
 import { buildControlPanel } from "../../search/control_panel/control_panel.js";
+import { notify } from "../../core/notification_service.js";
 
 /**
  * Mounts a form into the container and returns a cleanup
@@ -78,11 +79,12 @@ export async function mountFormController(container, params, env) {
       .finally(() => bus.trigger("sync:updated"));
   }
 
-  const statusEl = document.createElement("div");
-  statusEl.id = "status-msg";
-  statusEl.className = "text-muted small px-3 py-1";
-  statusEl.textContent = "Chargement du formulaire...";
-  container.appendChild(statusEl);
+  // Notification de chargement persistante, fermée dès que le formulaire est prêt
+  const closeLoading = notify({
+    type: "info",
+    message: "Loading...",
+  });
+
 
   try {
     const manifest = await getModuleManifest(module, apiKey, CONFIG.ODOO_BASE_URL);
@@ -90,7 +92,13 @@ export async function mountFormController(container, params, env) {
     const fieldsInfo = manifest.fields[model];
 
     if (!modelViews || !modelViews.form || !fieldsInfo) {
-      statusEl.textContent = `Aucune vue formulaire disponible pour "${model}".`;
+      closeLoading();
+      notify({
+        type: "danger",
+        title: "Formulaire indisponible",
+        message: `Aucune vue formulaire disponible pour "${model}".`,
+      });
+
       return () => {};
     }
 
@@ -129,7 +137,7 @@ export async function mountFormController(container, params, env) {
 
     const formEl = renderFormView(archXml, fieldsInfo, initialValues, currentSecurityContext, onObjectButtonClick);
     formEl.dataset.model = model;
-    container.insertBefore(formEl, statusEl);
+    container.appendChild(formEl);
     cleanupRules = attachLiveBusinessRules(archXml, formEl, fieldsInfo);
     cleanupOnchange = attachLiveOnchange(model, formEl, fieldsInfo, onchangeHelpers);
 
@@ -141,15 +149,28 @@ export async function mountFormController(container, params, env) {
       env.doAction({ tag: "form_view", module, model, id: currentRecordId, actionId, listLabel }, { replace: true });
     });
 
-    statusEl.textContent = navigator.onLine ? "" : "Mode hors-ligne — données mises en cache.";
+    closeLoading();
+    if (!navigator.onLine) {
+      notify({
+        type: "info",
+        message: "Mode hors-ligne — données mises en cache.",
+      });
+    }
+
 
     const recordLabel = (currentRecordId || pendingCreateUuid)
       ? initialValues.name || `#${currentRecordId || pendingCreateUuid}`
       : "Nouveau";
     cp.breadcrumbCurrent.textContent = recordLabel;
   } catch (err) {
+    closeLoading();
     console.error(err);
-    statusEl.textContent = "Erreur : " + err.message;
+    notify({
+      type: "danger",
+      title: "Erreur de chargement",
+      message: err.message,
+    });
+
   }
 
   /**
@@ -204,47 +225,97 @@ export async function mountFormController(container, params, env) {
    */
   async function onObjectButtonClick(methodName) {
     if (!currentRecordId) {
-      alert("Impossible d'exécuter cette action avant l'enregistrement de la fiche.");
+      notify({
+        type: "warning",
+        message: "Impossible d'exécuter cette action avant l'enregistrement de la fiche.",
+      });
       return;
     }
 
     try {
       const localUuid = await queueMethodCall(model, currentRecordId, methodName);
-      statusEl.textContent = "Action enregistrée localement — sera synchronisée dès que possible.";
       bus.trigger("sync:updated");
 
-      if (navigator.onLine) {
-        const result = await syncPendingActions();
+      // Hors-ligne : on annonce uniquement la mise en file.
+      if (!navigator.onLine) {
+        notify({
+          type: "info",
+          message: "Action enregistrée localement — sera synchronisée dès que possible.",
+        });
+        return;
+      }
 
-        if (result.synced > 0) {
-          statusEl.textContent = "Action synchronisée avec Odoo.";
-          try {
-            await refreshFormFromServer();
-          } catch (err) {
-            console.warn("Rafraîchissement post-action échoué:", err);
-          }
-        }
+      // En ligne : on tente le flush et on ne notifie qu'UNE fois,
+      // selon le résultat réel.
+      const result = await syncPendingActions();
 
-        // The server executed the method but returned an action (e.g. a
-        // wizard) it could not replay offline — see
-        // sync_queue.py::_execute_call_method. This is NOT an error:
-        // the underlying method did run, but a manual follow-up step
-        // remains, so the user must be told explicitly rather than
-        // believing the action fully completed.
-        const pendingInfo = result.manualActions && result.manualActions[localUuid];
-        if (pendingInfo) {
-          alert(
+      // Cas 1 — la méthode a renvoyé une action non rejouable : c'est
+      // le message le plus important, il prime sur le "succès".
+      const pendingInfo = result.manualActions && result.manualActions[localUuid];
+      if (pendingInfo) {
+        notify({
+          type: "warning",
+          title: "Action incomplète",
+          message:
             "L'action a été exécutée, mais nécessite une étape supplémentaire dans Odoo" +
             (pendingInfo.name ? ` (${pendingInfo.name})` : "") +
-            " — à compléter une fois connecté."
-          );
+            " — à compléter une fois connecté.",
+        });
+        try {
+          await refreshFormFromServer();
+        } catch (err) {
+          console.warn("Rafraîchissement post-action échoué:", err);
         }
-
         bus.trigger("sync:updated");
+        return;
       }
+
+      // Cas 2 — synchronisation réussie et action complète.
+      if (result.synced > 0) {
+        notify({
+          type: "success",
+          message: "Action synchronisée avec Odoo.",
+        });
+        try {
+          await refreshFormFromServer();
+        } catch (err) {
+          console.warn("Rafraîchissement post-action échoué:", err);
+        }
+        bus.trigger("sync:updated");
+        return;
+      }
+
+      // Cas 3 — le flush n'a rien synchronisé (conflit, erreur, ou
+      // file bloquée) : l'action reste en attente locale.
+      if (result.hasConflict) {
+        notify({
+          type: "warning",
+          title: "Conflit détecté",
+          message:
+            "Ce document a été modifié par quelqu'un d'autre. " +
+            "Ouvrez le panneau de synchronisation pour choisir quelle version garder.",
+        });
+      } else if (result.hasError) {
+        notify({
+          type: "danger",
+          title: "Erreur de synchronisation",
+          message: "L'action est enregistrée localement mais n'a pas pu être synchronisée.",
+        });
+      } else {
+        notify({
+          type: "info",
+          message: "Action enregistrée localement — sera synchronisée dès que possible.",
+        });
+      }
+
+      bus.trigger("sync:updated");
     } catch (err) {
       console.error(err);
-      statusEl.textContent = "Erreur lors de l'exécution de l'action : " + err.message;
+      notify({
+        type: "danger",
+        title: "Erreur",
+        message: "Erreur lors de l'exécution de l'action : " + err.message,
+      });
     }
   }
 
@@ -259,7 +330,10 @@ export async function mountFormController(container, params, env) {
     if (checkConstraint) {
       const errorMessage = checkConstraint(formData);
       if (errorMessage) {
-        statusEl.textContent = errorMessage;
+        notify({
+          type: "warning",
+          message: errorMessage,
+        });
         return;
       }
     }
@@ -291,7 +365,6 @@ export async function mountFormController(container, params, env) {
         pendingCreateUuid = localUuid;
       }
 
-      statusEl.textContent = "Enregistré localement — sera synchronisé dès que possible.";
       bus.trigger("sync:updated");
 
       if (navigator.onLine) {
@@ -304,7 +377,10 @@ export async function mountFormController(container, params, env) {
         }
 
         if (result.synced > 0) {
-          statusEl.textContent = "Enregistré et synchronisé avec Odoo";
+          notify({
+            type: "success",
+            message: "Enregistré et synchronisé avec Odoo",
+          });
           // NEW: in both cases (create OR write), we reload
           // the complete record from the server — for a create,
           // this also retrieves the IDs of one2many lines created at the
@@ -320,17 +396,28 @@ export async function mountFormController(container, params, env) {
           // intentionally refused because the record changed elsewhere
           // in the meantime. Resolution happens in the sync panel, not
           // here (see conflict_panel.js).
-          statusEl.textContent =
-            "Conflit détecté : ce document a été modifié par quelqu'un d'autre. " +
-            "Ouvrez le panneau de synchronisation pour choisir quelle version garder.";
+          notify({
+            type: "warning",
+            message:
+              "Conflit détecté : ce document a été modifié par quelqu'un d'autre. " +
+              "Ouvrez le panneau de synchronisation pour choisir quelle version garder.",
+          });
         } else if (result.hasError) {
-          statusEl.textContent = "Erreur lors de la synchronisation — voir le panneau de synchronisation.";
+          notify({
+            type: "danger",
+            title: "Erreur de synchronisation",
+            message: "Erreur lors de la synchronisation — voir le panneau de synchronisation.",
+          });
         }
         bus.trigger("sync:updated");
       }
     } catch (err) {
       console.error(err);
-      statusEl.textContent = "Erreur lors de l'enregistrement : " + err.message;
+      notify({
+        type: "danger",
+        title: "Erreur d'enregistrement",
+        message: "Erreur lors de l'enregistrement : " + err.message,
+      });
     }
   }
 
