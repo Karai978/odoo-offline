@@ -55,6 +55,16 @@ export function scopeCatalogToApps(catalog, appIds) {
     };
 }
 
+function formatPreparationFailures(failures) {
+    const lines = failures.slice(0, 5).map(({ model, phase, error }) => {
+        const detail = String(error || "Erreur inconnue").replace(/\s+/g, " ").slice(0, 500);
+        return `- ${model} (${phase}) : ${detail}`;
+    });
+    if (failures.length > lines.length) lines.push(`- … ${failures.length - lines.length} autre(s) erreur(s)`);
+    console.error("Offline app preparation failures", failures);
+    return `Préparation incomplète : ${failures.length} élément(s).\n${lines.join("\n")}`;
+}
+
 async function requestStoragePersistence() {
     try {
         if (navigator.storage?.persist) await navigator.storage.persist();
@@ -246,7 +256,7 @@ export async function prepareOffline(runtime, { appIds, catalog } = {}) {
             failures,
             message: `Préparation incomplète : ${failures.length} erreur(s).`,
         });
-        throw new Error(`Préparation incomplète pour ${failures.length} élément(s). Consultez le panneau offline.`);
+        throw new Error(formatPreparationFailures(failures));
     }
 
     // Apply changes that occurred while the full snapshots were being built.

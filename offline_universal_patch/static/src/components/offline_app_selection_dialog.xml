@@ -18,7 +18,8 @@
                         <small class="text-muted" t-esc="app.model_names.length + ' modèle(s)'"/>
                     </label>
                 </div>
-                <div t-if="state.error" class="alert alert-danger mt-3" role="alert" t-esc="state.error"/>
+                <div t-if="state.error" class="alert alert-danger mt-3" role="alert"
+                     style="white-space: pre-wrap; max-height: 40vh; overflow: auto;" t-esc="state.error"/>
                 <p class="text-muted mt-3 mb-0">La préparation inclut les menus, vues et données des modèles associés aux actions des apps sélectionnées. Les dépendances relationnelles et méthodes métier ne sont pas toutes couvertes.</p>
             </div>
             <t t-set-slot="footer">
