@@ -6,7 +6,7 @@ Addon unique `offline_universal_patch`, dépendant uniquement de `web`. Il intè
 
 Cette version est un **socle expérimental, pas une couverture universelle prête pour la production**.
 
-- Le bouton systray permet de sélectionner une ou plusieurs apps visibles de l'utilisateur. Les menus hors ligne sont limités à la sélection ; le snapshot prépare les modèles directement ciblés par leurs actions de fenêtre et leurs vues natives list/form/kanban/search.
+- Le bouton systray permet de sélectionner une ou plusieurs apps visibles de l'utilisateur. Les menus hors ligne sont limités à la sélection ; le snapshot prépare les modèles directement ciblés par leurs actions de fenêtre et leurs vues natives list/form/kanban/search/calendar lorsqu'elles sont déclarées par une action.
 - Pour chaque modèle directement ciblé, le snapshot prend tous les enregistrements autorisés et demande les champs binaires, par pages de 200. Les modèles liés qui ne sont pas directement ciblés par une action ne sont pas encore calculés comme dépendances complètes : une sélection Ventes/Achats peut donc manquer des données nécessaires à certains formulaires ou champs relationnels.
 - Le client conserve les données préparées dans IndexedDB, exécute localement un sous-ensemble ORM/CRUD, conserve une outbox avec UUID idempotents, traite les changements limités aux modèles sélectionnés et signale les divergences de `write_date`.
 - Le service worker prépare le shell et les assets déjà rencontrés, puis met en cache les réponses `/web/image` et `/web/content` par utilisateur lorsqu'elles sont consultées en ligne.

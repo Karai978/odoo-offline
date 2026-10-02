@@ -89,8 +89,7 @@ export class OfflineRuntime {
         this.syncPromise = null;
         this.engine = new OfflineOrmEngine({ database, user, runtime: this });
         this._onOnline = () => {
-            this.transportOffline = false;
-            this.env.bus.trigger("OFFLINE_UNIVERSAL:CONNECTIVITY", { online: true });
+            this.clearTransportOffline();
             this.database.getMeta("offline_ready").then((ready) => {
                 if (ready) this.sync().catch((error) => console.warn("Offline sync retry failed", error));
             });
@@ -155,6 +154,14 @@ export class OfflineRuntime {
 
     isOffline() {
         return !navigator.onLine || this.transportOffline;
+    }
+
+    clearTransportOffline() {
+        this.transportOffline = false;
+        this.env.bus.trigger("OFFLINE_UNIVERSAL:CONNECTIVITY", {
+            online: navigator.onLine,
+            reason: "transport-restored",
+        });
     }
 
     markTransportOffline() {
@@ -345,6 +352,7 @@ export const offlineUniversalService = {
                     return { ready: false, online: navigator.onLine, pending: 0, conflict: 0, error: 0, preparedAt: null, apps: [] };
                 },
                 async getAppCatalog() { throw new Error(`Stockage offline indisponible : ${error.message}`); },
+                clearTransportOffline() {},
                 async prepare() { throw new Error(`Stockage offline indisponible : ${error.message}`); },
                 async sync() { throw new Error(`Stockage offline indisponible : ${error.message}`); },
             };

@@ -128,7 +128,7 @@ export async function prepareOffline(runtime, { appIds, catalog } = {}) {
 
         const actionEntries = Object.entries(catalog.actions || {}).filter(([, action]) => action.res_model === model);
         for (const [actionId, action] of actionEntries) {
-            const actionViews = (action.views || []).filter(([, viewType]) => ["list", "tree", "form", "kanban", "search"].includes(viewType));
+            const actionViews = (action.views || []).filter(([, viewType]) => ["list", "tree", "form", "kanban", "search", "calendar"].includes(viewType));
             if (action.search_view_id?.[0]) actionViews.push([action.search_view_id[0], "search"]);
             if (!actionViews.length) continue;
             try {

@@ -321,7 +321,7 @@ export class OfflineOrmEngine {
         const views = {};
         for (const [viewId, requestedType] of requested) {
             const viewType = requestedType === "tree" ? "list" : requestedType;
-            if (!["list", "form", "kanban", "search"].includes(viewType)) {
+            if (!["list", "form", "kanban", "search", "calendar"].includes(viewType)) {
                 throw new OfflineUnsupportedError(`La vue ${viewType} de ${model} n'est pas prise en charge hors ligne.`);
             }
             const description = native.views[viewType];

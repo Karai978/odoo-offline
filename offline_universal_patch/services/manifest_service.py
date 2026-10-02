@@ -122,7 +122,7 @@ class ManifestService:
         normalized_views = []
         for view_id, view_type in requested_views:
             normalized_type = "list" if view_type == "tree" else view_type
-            if normalized_type in ("list", "form", "kanban", "search"):
+            if normalized_type in ("list", "form", "kanban", "search", "calendar"):
                 normalized_views.append((view_id or False, normalized_type))
         options = {"toolbar": True, "load_filters": True}
         if action_id:
@@ -131,7 +131,7 @@ class ManifestService:
         views = {
             view_type: view
             for view_type, view in (native_views.get("views") or {}).items()
-            if view_type in ("list", "form", "kanban", "search")
+            if view_type in ("list", "form", "kanban", "search", "calendar")
         }
         key = f"{model_name}::{action_id or 'default'}"
         return {

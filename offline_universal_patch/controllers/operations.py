@@ -34,8 +34,11 @@ class OfflineUniversalOperationsController(http.Controller):
         operation = dict(operation or {})
         if route_kind == "resequence":
             operation["method"] = "resequence"
-        with request.env.cr.savepoint():
-            result = OperationService.execute_one(request.env, device, operation)
+        # The HTTP request already owns the database transaction. Do not wrap
+        # arbitrary public Odoo methods in a controller savepoint: some addons
+        # manage transaction boundaries internally, which can invalidate an
+        # outer savepoint before its context manager releases it.
+        result = OperationService.execute_one(request.env, device, operation)
         if result.get("status") == "conflict":
             raise UserError("Conflit lors de l'application de cette opération offline.")
         if result.get("status") != "done":
