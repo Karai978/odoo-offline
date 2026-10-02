@@ -27,6 +27,20 @@ function simpleDisplayName(record, id) {
     return record?.display_name || record?.name || record?.complete_name || record?.code || String(id);
 }
 
+const TAX_TOTALS_TARGETS = {
+    "account.move": { model: "account.move" },
+    "purchase.order": { model: "purchase.order" },
+    "sale.order": { model: "sale.order" },
+    "account.move.line": { model: "account.move", parentField: "move_id" },
+    "purchase.order.line": { model: "purchase.order", parentField: "order_id" },
+    "sale.order.line": { model: "sale.order", parentField: "order_id" },
+};
+
+function many2oneId(value) {
+    const id = Array.isArray(value) ? value[0] : value;
+    return Number.isInteger(id) ? id : null;
+}
+
 function safeSlice(records, offset = 0, limit = undefined) {
     const start = Math.max(0, Number(offset) || 0);
     const end = limit === undefined || limit === null ? undefined : start + Math.max(0, Number(limit) || 0);
@@ -341,6 +355,32 @@ export class OfflineOrmEngine {
         return !!manifest?.access?.[operation];
     }
 
+    async invalidateTaxTotals(model, ids, values = {}) {
+        const target = TAX_TOTALS_TARGETS[model];
+        if (!target) return;
+        const parentManifest = await this.database.getManifest(target.model);
+        if (!parentManifest?.fields?.tax_totals) return;
+
+        const targetIds = new Set();
+        for (const id of asIds(ids)) {
+            if (!target.parentField) {
+                if (Number.isInteger(id)) targetIds.add(id);
+                continue;
+            }
+            const record = await this.getOne(model, id);
+            const previousParentId = many2oneId(record?.[target.parentField]);
+            const nextParentId = many2oneId(values?.[target.parentField]);
+            if (previousParentId !== null) targetIds.add(previousParentId);
+            if (nextParentId !== null) targetIds.add(nextParentId);
+        }
+
+        for (const id of targetIds) {
+            const record = await this.getOne(target.model, id);
+            if (!record || record.tax_totals === null) continue;
+            await this.database.putRecord(target.model, { ...record, tax_totals: null }, { local: id < 0 });
+        }
+    }
+
     async create(model, values, kwargs = {}, operationUuid = null, originalArgs = null) {
         const list = Array.isArray(values) ? values : [values || {}];
         if (!(await this.checkAccess(model, "create"))) {
@@ -354,6 +394,7 @@ export class OfflineOrmEngine {
             await this.database.putRecord(model, record, { local: true });
             ids.push(id);
         }
+        await this.invalidateTaxTotals(model, ids);
         await this.database.enqueue({
             operation_uuid: operationUuid || undefined,
             model,
@@ -371,6 +412,7 @@ export class OfflineOrmEngine {
             throw new OfflineUnsupportedError(`Modification offline refusée pour ${model} selon les droits mis en cache.`);
         }
         const expectedWriteDates = await this.expectedWriteDates(model, recordIds);
+        await this.invalidateTaxTotals(model, recordIds, values);
         for (const id of recordIds) {
             const record = await this.getOne(model, id);
             if (!record) throw new OfflineUnsupportedError(`La fiche ${model}(${id}) n'est pas en cache.`);
@@ -379,6 +421,7 @@ export class OfflineOrmEngine {
             updated.write_date = new Date().toISOString();
             await this.database.putRecord(model, updated, { local: id < 0 });
         }
+        await this.invalidateTaxTotals(model, recordIds, values);
         await this.database.enqueue({
             operation_uuid: operationUuid || undefined,
             model,
@@ -396,6 +439,7 @@ export class OfflineOrmEngine {
             throw new OfflineUnsupportedError(`Suppression offline refusée pour ${model} selon les droits mis en cache.`);
         }
         const expectedWriteDates = await this.expectedWriteDates(model, recordIds);
+        await this.invalidateTaxTotals(model, recordIds);
         for (const id of recordIds) await this.database.deleteRecord(model, id);
         await this.database.enqueue({
             operation_uuid: operationUuid || undefined,
@@ -417,6 +461,7 @@ export class OfflineOrmEngine {
                 throw new OfflineUnsupportedError(`Modification offline refusée pour ${model} selon les droits mis en cache.`);
             }
             const expectedWriteDates = await this.expectedWriteDates(model, ids);
+            await this.invalidateTaxTotals(model, ids, values);
             for (const id of ids) {
                 const record = await this.getOne(model, id);
                 if (!record) throw new OfflineUnsupportedError(`La fiche ${model}(${id}) n'est pas en cache.`);
@@ -425,6 +470,7 @@ export class OfflineOrmEngine {
                 updated.write_date = new Date().toISOString();
                 await this.database.putRecord(model, updated, { local: id < 0 });
             }
+            await this.invalidateTaxTotals(model, ids, values);
             await this.database.enqueue({
                 operation_uuid: operationUuid || undefined,
                 model,
@@ -443,6 +489,7 @@ export class OfflineOrmEngine {
         const record = { ...values, id: localId };
         await this.applyValues(model, record, values);
         await this.database.putRecord(model, record, { local: true });
+        await this.invalidateTaxTotals(model, [localId], values);
         await this.database.enqueue({
             operation_uuid: operationUuid || undefined,
             model,
@@ -587,6 +634,7 @@ export class OfflineOrmEngine {
             throw new Error(`L'exécuteur ${model}.${method} doit retourner {result, mutations: []}.`);
         }
         for (const mutation of outcome.mutations) {
+            await this.invalidateTaxTotals(mutation.model, [mutation.id], mutation.values || {});
             if (mutation.operation === "delete") {
                 await this.database.deleteRecord(mutation.model, mutation.id);
             } else {
@@ -613,11 +661,13 @@ export class OfflineOrmEngine {
                 const id = resultIds[index];
                 if (Number.isInteger(id)) await this.database.putRecord(model, { ...values[index], id });
             }
+            await this.invalidateTaxTotals(model, resultIds);
             return;
         }
         if (method === "write") {
             const ids = asIds(args[0]);
             const values = args[1] || {};
+            await this.invalidateTaxTotals(model, ids, values);
             for (const id of ids) {
                 const current = await this.getOne(model, id);
                 if (!current) continue;
@@ -625,10 +675,13 @@ export class OfflineOrmEngine {
                 await this.applyValues(model, updated, values);
                 await this.database.putRecord(model, updated);
             }
+            await this.invalidateTaxTotals(model, ids, values);
             return;
         }
         if (method === "unlink") {
-            for (const id of asIds(args[0])) await this.database.deleteRecord(model, id);
+            const ids = asIds(args[0]);
+            await this.invalidateTaxTotals(model, ids);
+            for (const id of ids) await this.database.deleteRecord(model, id);
             return;
         }
         if (method === "action_archive" || method === "action_unarchive") {

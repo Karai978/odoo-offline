@@ -14,7 +14,10 @@ const READ_METHODS = new Set([
     "read", "web_read", "search", "search_read", "web_search_read", "search_count",
     "read_group", "web_read_group", "read_progress_bar", "name_get", "name_search", "fields_get",
     "get_views", "get_view", "check_access_rights", "check_access_rule",
-    "get_external_id", "get_metadata", "onchange",
+    "get_external_id", "get_metadata", "onchange", "default_get", "systray_get_activities",
+]);
+const MUTATION_METHODS = new Set([
+    "create", "write", "unlink", "copy", "web_save", "toggle_active", "action_archive", "action_unarchive",
 ]);
 
 export function canonicalRoute(route) {
@@ -65,7 +68,13 @@ export function isReadOnlyCall(route, params = {}) {
         "/web/webclient/load_menus/:unique",
         "/web/webclient/version_info",
         "/web/session/get_session_info",
+        "/mail/init_messaging",
     ].includes(path);
+}
+
+export function isMutationCall(route, params = {}) {
+    const call = parseModelCall(route, params);
+    return !!call && MUTATION_METHODS.has(call.method);
 }
 
 export function isTransportError(error) {

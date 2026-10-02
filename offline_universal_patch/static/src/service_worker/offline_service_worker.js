@@ -79,7 +79,10 @@ function isCacheablePublicAsset(request, url) {
 
 function isCacheableUserResource(request, url) {
     if (request.method !== "GET" || url.origin !== self.location.origin) return false;
-    return url.pathname.startsWith("/web/image/") || url.pathname.startsWith("/web/content/") || url.pathname.startsWith("/web/webclient/load_menus/");
+    const isImageOrContent = ["/web/image", "/web/content"].some((path) =>
+        url.pathname === path || url.pathname.startsWith(`${path}/`)
+    );
+    return isImageOrContent || url.pathname.startsWith("/web/webclient/load_menus/");
 }
 
 self.addEventListener("message", (event) => {

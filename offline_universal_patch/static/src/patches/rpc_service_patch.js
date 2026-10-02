@@ -5,10 +5,10 @@ import { patch } from "@web/core/utils/patch";
 
 import {
     getOfflineRuntime,
+    isMutationCall,
     isReadOnlyCall,
     isTransportError,
     parseButtonCall,
-    parseModelCall,
     parseResequence,
     rpcCacheKey,
 } from "../services/runtime";
@@ -32,8 +32,7 @@ patch(rpcService, {
 
             const button = parseButtonCall(route, params);
             const resequence = parseResequence(route, params);
-            const modelCall = parseModelCall(route, params);
-            if (button || resequence || (modelCall && !isReadOnlyCall(route, params))) {
+            if (button || resequence || isMutationCall(route, params)) {
                 return runtime.executeOnlineMutation(route, params, rawRpc, settings);
             }
 

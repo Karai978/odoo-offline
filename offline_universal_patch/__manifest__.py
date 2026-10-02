@@ -26,6 +26,7 @@
             "offline_universal_patch/static/src/services/sync_service.js",
             "offline_universal_patch/static/src/patches/orm_service_patch.js",
             "offline_universal_patch/static/src/patches/rpc_service_patch.js",
+            "offline_universal_patch/static/src/patches/tax_totals_guard.js",
             "offline_universal_patch/static/src/service_worker/register.js",
             "offline_universal_patch/static/src/components/offline_status.xml",
             "offline_universal_patch/static/src/components/offline_app_selection_dialog.xml",
@@ -35,7 +36,9 @@
         ],
         "web.qunit_suite_tests": [
             "offline_universal_patch/static/src/query/domain.js",
+            "offline_universal_patch/static/src/patches/tax_totals_guard.js",
             "offline_universal_patch/static/tests/domain_tests.js",
+            "offline_universal_patch/static/tests/tax_totals_guard_tests.js",
         ],
     },
     "installable": True,
