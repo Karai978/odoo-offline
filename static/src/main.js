@@ -8,7 +8,12 @@ import "./webclient/login.js";
 import { mountWebclient } from "./webclient/webclient.js";
 import "./views/view.js";
 import "./webclient/home_menu/home_menu.js";
-import "./business_rules/sale_order_rules.js";
+// Règles métier offline par domaine (équivalent JS des
+// @api.onchange / @api.depends / @api.constrains d'Odoo 17) :
+import "./business_rules/sale_rules.js";
+import "./business_rules/purchase_rules.js";
+import "./business_rules/stock_rules.js";
+import "./business_rules/account_rules.js";
 
 // Fusionné depuis core/browser/service_worker.js : chez Odoo l'enregistrement
 // du Service Worker se fait directement au boot, sans fichier dédié.

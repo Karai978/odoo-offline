@@ -15,6 +15,7 @@ import { renderFormView } from "./form_renderer.js";
 import { attachLiveBusinessRules, attachLiveOnchange } from "../../model/relational_model/relational_model.js";
 import { constraintsRegistry } from "../../model/relational_model/business_rules_registry.js";
 import { collectFormData } from "./form_serializer.js";
+import { notify } from "../../core/notification_service.js";
 import {
   queueAction,
   queueMethodCall,
@@ -130,7 +131,7 @@ export async function mountFormController(container, params, env) {
     const formEl = renderFormView(archXml, fieldsInfo, initialValues, currentSecurityContext, onObjectButtonClick);
     formEl.dataset.model = model;
     container.insertBefore(formEl, statusEl);
-    cleanupRules = attachLiveBusinessRules(archXml, formEl, fieldsInfo);
+    cleanupRules = attachLiveBusinessRules(archXml, formEl, fieldsInfo, model, onchangeHelpers);
     cleanupOnchange = attachLiveOnchange(model, formEl, fieldsInfo, onchangeHelpers);
 
     currentContainer = formEl;
@@ -179,7 +180,7 @@ export async function mountFormController(container, params, env) {
     cleanupOnchange();
     currentContainer.replaceWith(newFormEl);
     currentContainer = newFormEl;
-    cleanupRules = attachLiveBusinessRules(archXml, newFormEl, currentFieldsInfo);
+    cleanupRules = attachLiveBusinessRules(archXml, newFormEl, currentFieldsInfo, model, onchangeHelpers);
     cleanupOnchange = attachLiveOnchange(model, newFormEl, currentFieldsInfo, onchangeHelpers);
 
     cp.breadcrumbCurrent.textContent = freshRecord.name || `#${currentRecordId}`;
@@ -255,10 +256,12 @@ export async function mountFormController(container, params, env) {
     // Filet local optionnel : ne remplace jamais la vraie contrainte Python
     // côté serveur, sert juste à éviter un aller-retour inutile quand la
     // règle est connue et enregistrée pour ce modèle.
+    // Convention : la règle retourne un MESSAGE (string) ou null si validé.
     const checkConstraint = constraintsRegistry.get(model, null);
     if (checkConstraint) {
       const errorMessage = checkConstraint(formData);
       if (errorMessage) {
+        notify({ type: "warning", message: errorMessage });
         statusEl.textContent = errorMessage;
         return;
       }

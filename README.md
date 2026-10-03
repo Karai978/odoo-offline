@@ -43,9 +43,17 @@ views/
 view.js : Dispatch générique (list_view/form_view)
 view_service.js : Charge/cache le manifest module
 relational_model/
-relational_model.js : Réévaluation live readonly/required
+relational_model.js : Réévaluation live readonly/required + onchange/compute locaux
 dynamic_field_attrs.js : Application des attrs dynamiques
 compute_engine.js : Calcul du total one2many + devise
+business_rules_registry.js : Registres offline_onchange / offline_constraints / offline_field_compute
+business_rules/
+rules_helpers.js : Helpers partagés (m2o, fiscal position, warnings partner, agrégats)
+sale_rules.js : Ventes — sale.order + sale.order.line (équivalent @api.onchange/dépends Odoo 17)
+purchase_rules.js : Achats — purchase.order + purchase.order.line
+stock_rules.js : Inventaire — stock.picking (niveaux picking)
+account_rules.js : Facturation — account.move + account.move.line
+sale_order_rules.js : ⚠️ DÉPRÉCÉ (stub, règles absorbées par sale_rules.js)
 form/
 form_renderer.js : Squelette o_form_view + chatter
 form_compiler.js : Compilation récursive de l'arch XML

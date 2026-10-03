@@ -12,3 +12,19 @@ import { registry } from "../../core/registry.js";
 export const computeRegistry = registry.category("offline_compute");
 export const onchangeRegistry = registry.category("offline_onchange");
 export const constraintsRegistry = registry.category("offline_constraints");
+
+/**
+ * Computes de champ simple (l'équivalent JS des @api.depends non one2many
+ * d'Odoo, ex: sale.order._compute_amounts, purchase.order._compute_date_planned).
+ *
+ * Clé : "model:field" (ex: "sale.order:amount_total")
+ * Valeur : fn(values, helpers) => valeur | undefined
+ *   - values : l'objet valeurs courant du formulaire (collectFormData)
+ *   - helpers : { getReferenceRecordsSmart, getRecordSmart, apiKey, baseUrl }
+ *   - retourner undefined pour ne pas toucher au champ.
+ *
+ * Réévalué à chaque événement input/change par attachLiveBusinessRules()
+ * (model/relational_model/relational_model.js) et écrit dans le DOM si le
+ * champ est présent dans la vue.
+ */
+export const fieldComputeRegistry = registry.category("offline_field_compute");
