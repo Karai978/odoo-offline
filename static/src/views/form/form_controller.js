@@ -75,6 +75,21 @@ export async function mountFormController(container, params, env) {
 
   if (navigator.onLine) {
     syncPendingActions()
+      .then((result) => {
+        // Fiche créée hors ligne dont la synchro vient de réussir pendant
+        // le rattrapage au chargement : on adopte l'id réel du record et
+        // on recharge depuis le serveur — même principe qu'Odoo 17 où,
+        // après web_save d'un nouveau record, le form est rechargé avec
+        // l'id réel et les valeurs calculées par le serveur (record.js
+        // _save : _updateConfig({ resId, resIds }) puis _setData(records[0])).
+        if (pendingCreateUuid && result.createdIds && result.createdIds[pendingCreateUuid]) {
+          currentRecordId = result.createdIds[pendingCreateUuid];
+          pendingCreateUuid = null;
+          refreshFormFromServer().catch((err) =>
+            console.warn("Rafraîchissement post-synchro échoué:", err)
+          );
+        }
+      })
       .catch((err) => console.warn("Rattrapage synchro échoué:", err))
       .finally(() => bus.trigger("sync:updated"));
   }

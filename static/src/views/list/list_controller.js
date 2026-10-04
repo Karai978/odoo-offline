@@ -9,6 +9,8 @@ import { buildStockPickingTypeDomain } from "./stock_picking_dashboard.js";
 import { CONFIG, getApiKey, getUserId } from "../../core/browser/session.js";
 import { getModuleManifest, resolveModelViews } from "../view_service.js";
 import { getListRecordsSmart, getPurchaseDashboardSmart } from "../../core/list_cache.js";
+import { getLocalPendingRecords } from "../../core/network/rpc_service.js";
+import { bus } from "../../core/bus/bus_service.js";
 import { formatCellValue } from "./list_renderer_utils.js";
 import { renderListView } from "./list_renderer.js";
 import { renderKanbanView } from "../kanban/kanban_renderer.js";
@@ -41,6 +43,7 @@ export async function mountListController(container, params, env) {
   let currentViewFieldsInfo = null;
   let activeDashboardFilter = null;
   let searchDebounceTimer = null;
+  let onSyncUpdated = null;
 
   // --- Construction of the control panel specific to this view ---
   const cp = buildControlPanel({
@@ -232,12 +235,73 @@ export async function mountListController(container, params, env) {
       }
     }
 
-    const listData = await getListRecordsSmart(model, apiKey, CONFIG.ODOO_BASE_URL, actionId, extraDomain);
-    allRecordsRaw = listData.records || [];
-    applySearchFilter();
-    renderCurrentPage();
+    // --- Chargement des données : serveur (ou cache) + créations locales ---
+    // Comme dans Odoo 17, un record enregistré dans le formulaire doit
+    // apparaître immédiatement dans la liste, quelle que soit sa situation
+    // de synchro : les créations locales en attente (id "local:<uuid>")
+    // sont donc TOUJOURS fusionnées en tête de liste, en ligne comme
+    // hors-ligne (dédupliquées par id — une fois synchronisées, leur id est
+    // renommé dans list_cache par replaceRecordIdInAllLists et elles
+    // n'apparaissent plus dans getLocalPendingRecords).
+    async function mergeLocalPendingRecords() {
+      let localRecords = [];
+      try {
+        localRecords = await getLocalPendingRecords(model);
+      } catch (err) {
+        console.warn("Lecture des créations locales échouée:", err);
+      }
+      const knownIds = new Set(allRecordsRaw.map((r) => String(r.id)));
+      const queueIds = new Set(localRecords.map((r) => String(r.id)));
+      // Lignes locales déjà affichées ET toujours en attente : on les garde
+      // (elles viennent de la liste en cache, valeurs à jour via l'upsert
+      // optimiste) ; celles qui ne sont plus dans la file (synchronisées)
+      // sont retirées — leur record réel arrive avec le serveur.
+      const keptLocals = allRecordsRaw.filter(
+        (r) => String(r.id).startsWith("local:") && queueIds.has(String(r.id))
+      );
+      const fresh = localRecords.filter((r) => !knownIds.has(String(r.id)));
+      if (fresh.length || keptLocals.length !== allRecordsRaw.filter((r) => String(r.id).startsWith("local:")).length) {
+        allRecordsRaw = [...fresh, ...keptLocals, ...allRecordsRaw.filter((r) => !String(r.id).startsWith("local:"))];
+      }
+      applySearchFilter();
+    }
 
-    statusEl.textContent = navigator.onLine ? "" : "Mode hors-ligne — liste mise en cache.";
+    async function loadData({ localOnlyFallback = true } = {}) {
+      try {
+        const listData = await getListRecordsSmart(model, apiKey, CONFIG.ODOO_BASE_URL, actionId, extraDomain);
+        allRecordsRaw = listData.records || [];
+        statusEl.textContent = navigator.onLine ? "" : "Mode hors-ligne — liste mise en cache.";
+      } catch (listErr) {
+        // Hors-ligne (ou serveur injoignable) sans liste jamais mise en
+        // cache : on dégrade gracieusement vers les seules fiches locales,
+        // plutôt qu'un écran d'erreur.
+        const localOnly = await getLocalPendingRecords(model);
+        if (localOnlyFallback && localOnly.length > 0) {
+          allRecordsRaw = [];
+          await mergeLocalPendingRecords();
+          statusEl.textContent = `Mode hors-ligne — liste non encore synchronisée (${allRecordsRaw.length} fiche(s) locale(s) affichée(s)).`;
+        } else {
+          throw listErr;
+        }
+      }
+      await mergeLocalPendingRecords();
+      renderCurrentPage();
+    }
+
+    await loadData();
+
+    // À chaque synchro (panneau navbar, save du formulaire…) :
+    // - en ligne : rechargement serveur (le record synchronisé réapparaît
+    //   avec son vrai id, la ligne locale disparaît) ;
+    // - hors-ligne : simple re-fusion des créations locales en attente.
+    onSyncUpdated = () => {
+      if (navigator.onLine) {
+        loadData({ localOnlyFallback: false }).catch((err) => console.warn("Rechargement liste après synchro:", err));
+      } else {
+        mergeLocalPendingRecords().then(renderCurrentPage);
+      }
+    };
+    bus.addEventListener("sync:updated", onSyncUpdated);
   } catch (err) {
     console.error(err);
     statusEl.textContent = "Erreur : " + err.message;
@@ -245,6 +309,7 @@ export async function mountListController(container, params, env) {
 
   function cleanup() {
     clearTimeout(searchDebounceTimer);
+    if (onSyncUpdated) bus.removeEventListener("sync:updated", onSyncUpdated);
     if (listContainer._currentView?._cleanup) {
       listContainer._currentView._cleanup();
     }

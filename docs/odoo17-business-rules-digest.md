@@ -321,3 +321,78 @@ Règles attendues (pattern standard 17) : `onchange product_id` → `product_uom
 Le bundle (`static/src/bundles/app.bundle.js`) doit être régénéré :
 `(cd scripts && npm install) && bash scripts/build-bundle.sh`
 (pas de réseau dans le sandbox de dev — à faire côté utilisateur).
+
+---
+
+## 11. Flux create / save / liste — source Odoo 17 (web client) et portage offline
+
+### 11.1 Ce que fait Odoo 17 en ligne (source vérifiée, branch 17.0)
+
+Fichiers lus : `addons/web/static/src/model/relational_model/relational_model.js`,
+`.../relational_model/record.js`, `.../views/list/list_controller.js`,
+`.../views/form/form_controller.js`.
+
+1. **Création** — bouton "Nouveau" de la liste :
+   `ListController.createRecord()` → liste éditables ? ligne virtuelle inline
+   (`DynamicRecordList.addNewRecord`, pas d'id) : `props.createRecord()` →
+   `doAction(form_view, { isNew: true })`. Le form charge le record sans
+   `resId` (`_loadData` → `_loadNewRecord` → **onchange serveur** pour les
+   valeurs par défaut).
+2. **Enregistrement** — `Record.save()` → `Record._save()`, dans
+   `model/relational_model/record.js` :
+   - `creation = !this.resId` ; validité ; `changes = _getChanges()` (diff vs
+     valeurs serveur, champs readonly exclus) ;
+   - un **seul RPC `web_save`** (`orm.webSave(resModel, resId ? [resId] : [],
+     changes)` — tableau vide pour un nouveau record = CREATE serveur) ;
+   - **si création** : `resId = records[0].id` puis
+     `_updateConfig(config, { resId, resIds }, { reload: false })` —
+     **le record reçoit son id réel SANS naviguer** (le form reste ouvert,
+     l'URL est mise à jour via `updateURL()` → `router.pushState({ id: resId })`) ;
+   - `hooks.onRecordSaved` ; rechargement complet depuis le serveur
+     (`_setData(records[0])`) → les champs calculés par le serveur
+     (séquence, totaux…) remplacent les valeurs locales.
+3. **Retour à la liste** — breadcrumb : `beforeLeave()` (le form sauvegarde
+   s'il est dirty, `reload: false`), puis la liste est **remontée et
+   rechargée depuis le serveur** (`web_search_read`) → le nouveau record y
+   figure. Dans une liste éditables, le record virtuel est ajouté dans
+   `root.records` et son id est posé en place après save.
+4. **Ouverture** — `ListController.openRecord(record)` →
+   `selectRecord(record.resId, { activeIds })` → `doAction(form_view, { id })`
+   → le form charge `web_read` de ce seul id.
+
+### 11.2 Équivalent offline dans la PWA (état avant correction)
+
+| Étape Odoo 17 | Équivalent PWA avant | État |
+|---|---|---|
+| create RPC → id réel | `queueAction(model, "create", values)` → `local:<uuid>`, snapshot `record_cache` + insertion `list_cache` (optimiste, `applyOptimisticLocalUpdate`) | ✅ présent |
+| id réel posé en place | au sync : `replaceRecordId` + `replaceRecordIdInAllLists` | ✅ présent |
+| liste rechargée serveur → record visible | `getListRecordsSmart` (serveur si online, sinon cache) | ⚠️ **lacune** : en ligne, le fetch serveur ÉCRASE le cache → les créations non synchronisées disparaissent de la liste |
+| liste avec cache | `list_cache` | ⚠️ **lacune** : hors-ligne sans liste jamais en cache → erreur "Aucune liste en cache" au lieu d'afficher les fiches locales |
+| record_id de la création persisté | — | ⚠️ **lacune** : `odoo_record_id` renvoyé par le push n'était pas stocké dans `sync_queue` (réouverture par id local après rechargement impossible) |
+| form ouvrable par id | `form_controller` gère déjà `local:<uuid>` (lecture `record_cache`, amend de la file) | ✅ présent |
+| lignes liste/kanban ouvrables par id quelconque | `record.id` passé en closure (aucun `parseInt`) | ✅ présent |
+
+### 11.3 Corrections implémentées
+
+1. **`core/network/rpc_service.js`**
+   - `syncPendingActions` : `odoo_record_id` persisté dans l'entrée
+     `sync_queue` au succès d'un create (réouverture par id local robuste,
+     et détection "déjà synchronisé" côté liste).
+   - Nouveau `getLocalPendingRecords(modelName)` : toutes les entrées
+     `create` du modèle en status `pending`/`error`/`conflict` sans
+     `odoo_record_id` → `[{ ...values, id: "local:<uuid>" }]`.
+2. **`views/list/list_controller.js`**
+   - Les créations locales en attente sont **toujours fusionnées** en tête de
+     la liste (en ligne comme hors-ligne), dédupliquées par id — le record
+     apparaît donc dès l'enregistrement, comme dans Odoo.
+   - Hors-ligne sans liste en cache : la liste s'affiche avec les seules
+     fiches locales (plus d'écran d'erreur), avec message explicite.
+   - Abonnement bus `sync:updated` : à chaque synchro (panneau navbar,
+     save…), la liste OPENED re-fusionne sans aller au serveur — la ligne
+     locale disparaît quand elle est synchronisée (id renommé côté
+     `list_cache` par `replaceRecordIdInAllLists`).
+3. **`views/form/form_controller.js`**
+   - Chemin ré-enregistrement d'une fiche locale déjà synchronisée
+     (`odoo_record_id` maintenant persisté) : conversion automatique en
+     `write` — même comportement que dans Odoo (le record a un id, tout edit
+     est un write).

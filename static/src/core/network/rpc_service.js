@@ -147,6 +147,7 @@ export async function syncPendingActions() {
 
       await db.sync_queue.update(localEntry.id, {
         status: mappedStatus,
+        odoo_record_id: result.odoo_record_id || null,
         error_message: result.error || null,
         conflict_details: result.conflicts ? JSON.stringify(result.conflicts) : null,
         requires_manual_action: result.requires_manual_action || false,
@@ -227,14 +228,59 @@ export async function getSyncQueueEntry(localUuid) {
 }
 
 /**
- * Allows modification of a record 
+ * Récupère les enregistrements CRÉÉS LOCALEMENT et pas encore définitivement
+ * envoyés au serveur (statut "pending", "error" ou "conflict" et sans
+ * odoo_record_id). Retourne une liste de valeurs prêtes à l'affichage dans
+ * une vue liste : `{ ...values, id: "local:<uuid>" }`.
+ *
+ * C'est ce qui permet au record créé hors ligne d'apparaître dans la liste
+ * (et d'y rester visible en ligne tant que sa synchro n'est pas faite),
+ * comme dans Odoo où le create est immédiat côté serveur.
+ */
+export async function getLocalPendingRecords(modelName) {
+  const entries = await db.sync_queue
+    .where("model_name")
+    .equals(modelName)
+    .filter((e) => ["pending", "error", "conflict"].includes(e.status) && !e.odoo_record_id)
+    .toArray();
+
+  const records = [];
+  for (const entry of entries) {
+    if (entry.operation !== "create") continue;
+    let values = {};
+    try {
+      values = JSON.parse(entry.payload) || {};
+    } catch (err) {
+      continue; // payload illisible — on ignore cette entrée
+    }
+    if (values.id) delete values.id; // l'id local est imposé ci-dessous
+    records.push({ ...values, id: `local:${entry.local_uuid}`, _local_created_at: entry.created_at });
+  }
+  // Les plus récentes en premier (comme une création dans Odoo)
+  records.sort((a, b) => (a._local_created_at < b._local_created_at ? 1 : -1));
+  for (const r of records) delete r._local_created_at;
+  return records;
+}
+
+/**
+ * Allows modification of a record
  * created offline, even before its initial upload to the server.
+ *
+ * Accepte les entrées "pending" ET "error" : une création dont l'envoi a
+ * échoué techniquement est simplement corrigée puis réessayée — on
+ * RÉUTILISE la même entrée (même local_uuid) plutôt que d'en mettre une
+ * seconde en file, ce qui créerait un doublot côté serveur.
+ * Les entrées "conflict" restent du ressort du panneau de conflits, et
+ * une entrée déjà synchronisée (odoo_record_id) est un write désormais.
  */
 export async function amendPendingCreate(localUuid, payload) {
   const entry = await getSyncQueueEntry(localUuid);
-  if (!entry || entry.status !== "pending") return false;
+  if (!entry || entry.odoo_record_id) return false;
+  if (!["pending", "error"].includes(entry.status)) return false;
   await db.sync_queue.update(entry.id, {
     payload: JSON.stringify(payload),
+    status: "pending",
+    error_message: null,
   });
   await applyOptimisticLocalUpdate(entry.model_name, "create", payload, localUuid);
   return true;
