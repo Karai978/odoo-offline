@@ -13,6 +13,7 @@ import {
   renderProductCatalog,
 } from "../product_catalog/product_catalog.js";
 import { createFieldInput } from "../field.js";
+import { notify } from "../../../core/notification_service.js";
 
 let one2manyRowCounter = 0;
 
@@ -296,14 +297,20 @@ export function renderOne2manyField(name, info, node, initialValue, parentValues
     const renderedFieldSet = new Set(columns.map((c) => c.field));
     const { productFields, qtyField } = detectCatalogFieldNames(subFields, renderedFieldSet);
     if (productFields.length === 0 || !qtyField || !productFields.includes("product_id")) {
-      alert("Catalogue indisponible : champs produit/quantité non détectés pour ce modèle.");
+      notify({
+        type: "danger",
+        message: "Catalogue indisponible ",
+      });
       return;
     }
 
     const partnerId = getCurrentPartnerIdFromForm();
 
     if (!partnerId) {
-      alert("Veuillez sélectionner un client (ou fournisseur) avant d'ouvrir le catalogue.");
+      notify({
+        type: "danger",
+        message: "Veuillez sélectionner un client (ou fournisseur) ",
+      });
       return;
     }
 
@@ -312,7 +319,10 @@ export function renderOne2manyField(name, info, node, initialValue, parentValues
     // which describes the LINES, not the parent document.
     const catalogModel = wrapper.closest("[data-model]")?.dataset.model;
     if (!catalogModel) {
-      alert("Impossible de déterminer le modèle du document courant.");
+      notify({
+        type: "danger",
+        message: "Impossible de déterminer le modèle du document courant.",
+      });
       return;
     }
 
@@ -320,7 +330,10 @@ export function renderOne2manyField(name, info, node, initialValue, parentValues
     const products = await getCatalogProductsSmart(catalogModel, partnerId, apiKey, CONFIG.ODOO_BASE_URL);
 
     if (!products || products.length === 0) {
-      alert("Aucun produit disponible dans le catalogue (hors-ligne sans cache, ou catalogue vide).");
+      notify({
+        type: "info",
+        message: "Aucun produit disponible dans le catalogue",
+      });
       return;
     }
 
