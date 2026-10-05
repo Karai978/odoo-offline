@@ -199,6 +199,49 @@ export function todayISO() {
 }
 
 /* ------------------------------------------------------------------ */
+/* Lecture produit avec mémo d'échec (anti-spam réseau)                */
+/* ------------------------------------------------------------------ */
+
+// Mémoire des échecs de lecture produit : "model:id" -> timestamp.
+// Un produit INDISSONIBLE (record absent, 403, réseau coupé) ne doit
+// pas provoquer un fetch à CHAQUE événement de la ligne (boucle de
+// refetch) — l'échec est mémorisé 5 minutes, comme les références.
+const _productFailMemo = new Map();
+const PRODUCT_FAIL_TTL = 5 * 60 * 1000;
+
+/**
+ * Record produit complet : CACHE D'ABORD (zéro réseau), sinon un fetch
+ * unique (mis en cache sur succès). Sur échec : mémo négatif 5 min
+ * (null ensuite, sans réseau). Null si introuvable/indisponible — une
+ * règle ne doit jamais planter à cause d'un produit absent.
+ */
+export async function getProductRecordMemoized(productId, helpers) {
+  const id = m2oId(productId);
+  if (!id) return null;
+  try {
+    const cached = await getCachedRecord("product.product", id);
+    if (cached) return cached;
+  } catch (err) {
+    /* cache illisible — on tente le réseau */
+  }
+  const key = "product.product:" + String(id);
+  const failAt = _productFailMemo.get(key);
+  if (failAt && Date.now() - failAt < PRODUCT_FAIL_TTL) return null;
+  if (!navigator.onLine) {
+    _productFailMemo.set(key, Date.now());
+    return null;
+  }
+  try {
+    const rec = await fetchAndStoreRecord("product.product", id, helpers.apiKey, helpers.baseUrl);
+    _productFailMemo.delete(key);
+    return rec || null;
+  } catch (err) {
+    _productFailMemo.set(key, Date.now());
+    return null;
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* Moteur de taxes approximatif (offline)                              */
 /* ------------------------------------------------------------------ */
 
@@ -310,18 +353,73 @@ export function lineTaxIds(line) {
     if (id === false || id === null || id === undefined) return;
     if (!ids.some((x) => String(x) === String(id))) ids.push(id);
   };
-  if (Array.isArray(line.tax_ids)) {
-    for (const t of line.tax_ids) push(Array.isArray(t) ? t[0] : t && typeof t === "object" ? t.id : t);
-  }
-  push(m2oId(line.tax_id));
-  const taxesCol = line.taxes_id;
-  if (Array.isArray(taxesCol)) {
-    // taxes_id rendu comme many2many (vue custom) : liste d'ids/paires
-    for (const t of taxesCol) push(Array.isArray(t) ? t[0] : t && typeof t === "object" ? t.id : t);
-  } else {
-    push(m2oId(taxesCol));
-  }
+  const pushAll = (col) => {
+    if (Array.isArray(col)) {
+      // Many2many (tax_id est m2m en v17, tax_ids/taxes_id m2m) : TOUTES
+      // les taxes de la colonne
+      for (const t of col) push(Array.isArray(t) ? t[0] : t && typeof t === "object" ? t.id : t);
+    } else {
+      push(m2oId(col));
+    }
+  };
+  pushAll(line.tax_ids);
+  pushAll(line.tax_id);
+  pushAll(line.taxes_id);
   return ids;
+}
+
+/**
+ * Miroir offline de account.fiscal.position.map_tax (Odoo 17) :
+ *  - sans position fiscale → taxes inchangées ;
+ *  - sinon, chaque taxe est remplacée par sa `tax_dest_id` si la position
+ *    déclare une correspondance active (`tax_src_id` = taxe, `tax_dest_active`
+ *    non désactivé) ; une correspondance vers une dest vide SUPPRIME la
+ *    taxe ; les taxes sans correspondance sont conservées.
+ *
+ * Les correspondances sont lues dans le record de la position
+ * (one2many `tax_ids` — renvoyé par read_record). Position non lisible
+ * (hors-ligne, jamais chargée) → taxes brutes conservées et le serveur
+ * corrigera à la synchro (limitation documentée).
+ *
+ * @param {object[]} taxPairs - taxes brutes au format [[id, name], ...]
+ * @param {number|object|false} fposId
+ * @param {object} helpers
+ * @returns {Promise<object[]>} taxes mappées [[id, name], ...]
+ */
+export async function mapTaxesWithFpos(taxPairs, fposId, helpers) {
+  const taxes = (Array.isArray(taxPairs) ? taxPairs : []).filter(Boolean);
+  const id = m2oId(fposId);
+  if (!id || !taxes.length) return taxes;
+  let fpos = null;
+  try {
+    fpos = await helpers.getRecordSmart("account.fiscal.position", id, helpers.apiKey, helpers.baseUrl);
+  } catch (err) {
+    fpos = null;
+  }
+  if (!fpos || isMissingRecord(fpos) || !Array.isArray(fpos.tax_ids) || !fpos.tax_ids.length) {
+    return taxes; // mapping inconnu → taxes brutes (le serveur tranchera)
+  }
+  const map = {};
+  for (const row of fpos.tax_ids) {
+    const src = row && (row.tax_src_id !== undefined ? m2oId(row.tax_src_id) : false);
+    const dest = row && (row.tax_dest_id !== undefined ? m2oId(row.tax_dest_id) : false);
+    // correspondance retenue si active (tax_dest_id vide = « supprimer la
+    // taxe » ; tax_dest_active désactivé = correspondance ignorée)
+    if (src && (!dest || row.tax_dest_active)) map[String(src)] = dest || "";
+  }
+  const result = [];
+  for (const t of taxes) {
+    const tid = Array.isArray(t) ? t[0] : t && typeof t === "object" ? t.id : t;
+    const tname = Array.isArray(t) ? (t[1] ?? "") : t && typeof t === "object" ? (t.display_name ?? "") : "";
+    const key = String(tid);
+    if (key in map) {
+      if (map[key] !== "") result.push([map[key], tname]); // nom de la dest : résolu par les références du widget
+      // correspondance vers le vide → taxe supprimée (comme côté serveur)
+    } else {
+      result.push([tid, tname]); // pas de correspondance → taxe conservée
+    }
+  }
+  return result;
 }
 
 /** Sous-total d'une ligne depuis ses cellules : qty × prix × (1 − remise/100). */

@@ -376,12 +376,19 @@ export function renderOne2manyField(name, info, node, initialValue, parentValues
       const previousQty = previousQuantities[productId] || 0;
       if (qty === previousQty) return;
 
+      // Ligne existante du même produit : id produit SYNCHRONE de la
+      // ligne (tr._productId) en priorité — l'input caché m2o peut être
+      // vide juste après création de la ligne, et un raté ici créait un
+      // DOUBLON au lieu de mettre à jour la quantité.
+      const tmplId = product && product.product_tmpl_id;
       const existingTr = Array.from(tbody.querySelectorAll("tr.o_data_row")).find((tr) => {
-        const wrapperEl = tr._cellRefs?.["product_id"]?.el;
-        const hiddenInput = wrapperEl?.querySelector('input[type="hidden"]');
-        const rawId = hiddenInput?.value || "";
+        const rawId = rowProductId(tr);
         if (!rawId || rawId.startsWith("tmp:")) return false;
-        return parseInt(rawId, 10) === productId;
+        if (parseInt(rawId, 10) === productId) return true;
+        // Vue « produit modèle » : la ligne porte l'id du modèle
+        if (tmplId && tr._productTemplateId !== undefined && tr._productTemplateId !== null
+          && parseInt(tr._productTemplateId, 10) === parseInt(tmplId, 10)) return true;
+        return false;
       });
 
       if (qty === 0 && existingTr) {
@@ -524,8 +531,25 @@ export function renderOne2manyField(name, info, node, initialValue, parentValues
     // price_subtotal…) — servies au moteur de taxes pour le repli
     // hors-ligne quand le record account.tax n'est pas en cache.
     tr._serverData = rowData;
+    // Id produit / modèle SYNCHRONES — source de vérité fiable pour la
+    // détection de ligne existante du catalogue. L'input caché du m2o
+    // n'est pas utilisable pour ça : sa valeur initiale peut être
+    // posée en retard, et une ligne « non trouvée » menait au doublon.
+    tr._productId =
+      rowData.product_id !== undefined && rowData.product_id !== null && rowData.product_id !== false
+        ? rowData.product_id
+        : (rowData.product_template_id || null);
+    tr._productTemplateId = rowData.product_template_id || null;
     tbody.insertBefore(tr, addRowTr);
     return tr;
+  }
+
+  /** Id produit d'une ligne (synchrone d'abord, input caché en repli). */
+  function rowProductId(tr) {
+    const pid = tr._productId;
+    if (pid !== undefined && pid !== null && pid !== false && String(pid) !== "") return String(pid);
+    const hidden = tr._cellRefs?.["product_id"]?.el?.querySelector?.('input[type="hidden"]');
+    return hidden ? hidden.value : "";
   }
 
   /**

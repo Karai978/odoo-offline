@@ -28,7 +28,7 @@ import {
   constraintsRegistry,
   fieldComputeRegistry,
 } from "../model/relational_model/business_rules_registry.js";
-import { asM2o, m2oId, displayOf, isMissingRecord, fposForPartner, partnerWarning, docLinesAmounts, lineTaxIds, getTaxRecord, computeTaxAmounts, todayISO } from "./rules_helpers.js";
+import { asM2o, m2oId, displayOf, isMissingRecord, fposForPartner, partnerWarning, docLinesAmounts, lineTaxIds, mapTaxesWithFpos, getProductRecordMemoized, getTaxRecord, computeTaxAmounts, todayISO } from "./rules_helpers.js";
 
 /* ================================================================== */
 /* Helpers internes au domaine Ventes                                  */
@@ -356,11 +356,13 @@ onchangeRegistry.add("sale.order:order_line#product", async (lines, values, help
   let changed = false;
   const filled = [];
 
-  // Vide = undefined/false/null/"" — un prix volontairement 0 est conservé.
-  // Une colonne ABSENTE de la vue (pas dans `line`) ne doit JAMAIS rendre
-  // la ligne « incomplète » : sinon la règle resterait active à chaque
-  // événement et refetcherait les produits en boucle.
-  const isEmpty = (v) => v === undefined || v === false || v === null || v === "";
+  // Vide = undefined/false/null/""/tableau vide — un prix volontairement
+  // 0 est conservé. Une colonne ABSENTE de la vue (pas dans `line`) ne
+  // doit JAMAIS rendre la ligne « incomplète » : sinon la règle
+  // resterait active à chaque événement et refetcherait les produits en
+  // boucle.
+  const isEmpty = (v) =>
+    Array.isArray(v) ? v.length === 0 : v === undefined || v === false || v === null || v === "";
   const num = (v) => (v === undefined || v === false || v === null ? 0 : Number(v) || 0);
   const sameMoney = (a, b) => num(a).toFixed(2) === num(b).toFixed(2);
 
@@ -369,20 +371,21 @@ onchangeRegistry.add("sale.order:order_line#product", async (lines, values, help
     const pid = line.product_id;
     if (!pid || typeof pid === "string") { filled.push(line); continue; } // id local tmp:…
 
+    // Backfill des champs dérivés. La colonne taxe n'est PAS dans cette
+    // liste : elle a son propre fill dédié ci-dessous (miroir de
+    // _compute_tax_id, qui ne se déclenche que lors du choix du
+    // produit) — une colonne taxe vide ne doit pas non plus empêcher la
+    // règle de se stabiliser (boucle de refetch).
     const needsFill =
       ("name" in line && isEmpty(line.name)) ||
       ("price_unit" in line && isEmpty(line.price_unit)) ||
-      ("product_uom" in line && isEmpty(line.product_uom)) ||
-      ("tax_id" in line && isEmpty(line.tax_id));
+      ("product_uom" in line && isEmpty(line.product_uom));
 
+    // Lecture produit : cache d'abord, un fetch, mémo d'échec 5 min.
     let product = null;
     if (needsFill) {
-      try {
-        product = await helpers.getRecordSmart("product.product", pid, helpers.apiKey, helpers.baseUrl);
-      } catch (err) {
-        product = null;
-      }
-      if (isMissingRecord(product)) { filled.push(line); continue; }
+      product = await getProductRecordMemoized(pid, helpers);
+      if (!product) { filled.push(line); continue; }
     }
 
     const updated = { ...line };
@@ -395,19 +398,30 @@ onchangeRegistry.add("sale.order:order_line#product", async (lines, values, help
         updated.product_uom = { id: uom.id, display_name: displayOf(refsUom, uom.id) || uom.display_name };
       }
 
-      // tax_id est un MANY2ONE UNIQUE sur sale.order.line en Odoo 17
-      // (taxes_id m2m = les taxes additionnelles) → on écrit la première
-      // taxe du produit, comme le fait _compute_tax_id côté serveur.
-      if ("tax_id" in updated && isEmpty(line.tax_id) && Array.isArray(product.taxes_id) && product.taxes_id.length) {
-        const first = product.taxes_id[0];
-        updated.tax_id = Array.isArray(first)
-          ? { id: first[0], display_name: first[1] ?? String(first[0]) }
-          : { id: first, display_name: "" };
-      }
-
       if ("price_unit" in updated && isEmpty(line.price_unit)) {
         // pas de pricelist offline → repli list_price
         updated.price_unit = Number(product.list_price) || 0;
+      }
+    }
+
+    // ---- Fill DÉDIÉ des taxes (sale.order.line._compute_tax_id, v17) ----
+    // UNIQUEMENT sur les lignes nouvelles (sans id) : tax_id est un
+    // MANY2MANY — TOUTES les taxes du produit, MAPPÉES par la position
+    // fiscale du document (fpos.map_tax). C'est ce mapping qui explique
+    // p. ex. « produit taxé 3 % → ligne 15 % » quand le client a une
+    // position fiscale. Une ligne SERVEUR avec colonne taxe vide est
+    // laissée telle quelle (parité Odoo : le compute ne se relance que
+    // lors du choix du produit).
+    const isNewLine = line.id === undefined || line.id === null || line.id === false;
+    const taxCols = ["tax_id", "taxes_id", "tax_ids"].filter((f) => f in line);
+    if (isNewLine && taxCols.length && taxCols.some((f) => isEmpty(line[f]))) {
+      let p = product;
+      if (!p) p = await getProductRecordMemoized(pid, helpers);
+      if (p && Array.isArray(p.taxes_id) && p.taxes_id.length) {
+        const mapped = await mapTaxesWithFpos(p.taxes_id, values.fiscal_position_id, helpers);
+        if (mapped.length) {
+          for (const f of taxCols) if (isEmpty(line[f])) updated[f] = mapped;
+        }
       }
     }
 

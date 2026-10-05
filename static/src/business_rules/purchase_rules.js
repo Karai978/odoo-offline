@@ -23,7 +23,7 @@ import {
   constraintsRegistry,
   fieldComputeRegistry,
 } from "../model/relational_model/business_rules_registry.js";
-import { asM2o, m2oId, displayOf, isMissingRecord, fposForPartner, partnerWarning, docLinesAmounts, lineTaxIds, getTaxRecord, computeTaxAmounts } from "./rules_helpers.js";
+import { asM2o, m2oId, displayOf, isMissingRecord, fposForPartner, partnerWarning, docLinesAmounts, lineTaxIds, mapTaxesWithFpos, getProductRecordMemoized, getTaxRecord, computeTaxAmounts } from "./rules_helpers.js";
 
 
 /* ================================================================== */
@@ -194,21 +194,20 @@ onchangeRegistry.add("purchase.order:order_line#product", async (lines, values, 
     const pid = line.product_id;
     if (!pid || typeof pid === "string") { filled.push(line); continue; }
 
+    // Backfill des champs dérivés — la colonne taxe a son propre fill
+    // dédié ci-dessous (miroir de _compute_tax_id : déclenché au choix
+    // du produit, lignes nouvelles uniquement) ; une colonne taxe vide
+    // ne doit pas empêcher la stabilisation (boucle de refetch).
     const needsFill =
       ("name" in line && isEmptyCell(line.name)) ||
       ("price_unit" in line && isEmptyCell(line.price_unit)) ||
-      ("product_uom" in line && isEmptyCell(line.product_uom)) ||
-      ("tax_ids" in line && isEmptyCell(line.tax_ids)) ||
-      ("taxes_id" in line && isEmptyCell(line.taxes_id));
+      ("product_uom" in line && isEmptyCell(line.product_uom));
 
+    // Lecture produit : cache d'abord, un fetch, mémo d'échec 5 min.
     let product = null;
     if (needsFill) {
-      try {
-        product = await helpers.getRecordSmart("product.product", pid, helpers.apiKey, helpers.baseUrl);
-      } catch (err) {
-        product = null;
-      }
-      if (isMissingRecord(product)) { filled.push(line); continue; }
+      product = await getProductRecordMemoized(pid, helpers);
+      if (!product) { filled.push(line); continue; }
     }
 
     const updated = { ...line };
@@ -220,21 +219,6 @@ onchangeRegistry.add("purchase.order:order_line#product", async (lines, values, 
       if (uom && uom.id && !line.product_uom) {
         if (!refsUom) refsUom = await helpers.getReferenceRecordsSmart("product.uom", helpers.apiKey, helpers.baseUrl);
         updated.product_uom = { id: uom.id, display_name: displayOf(refsUom, uom.id) || uom.display_name };
-      }
-
-      // taxes : supplier_taxes_id (repli taxes_id du produit)
-      const taxes = Array.isArray(product.supplier_taxes_id) && product.supplier_taxes_id.length
-        ? product.supplier_taxes_id
-        : product.taxes_id;
-      if (taxes && taxes.length) {
-        const normalized = taxes.map((t) => (Array.isArray(t) ? t : [t, t]));
-        // tax_ids = MANY2MANY (widget tags) → tableau de paires
-        if ("tax_ids" in updated && isEmptyCell(line.tax_ids)) updated.tax_ids = normalized;
-        // taxes_id = MANY2ONE UNIQUE en Odoo 17 → première taxe uniquement
-        if ("taxes_id" in updated && isEmptyCell(line.taxes_id)) {
-          const first = normalized[0];
-          updated.taxes_id = { id: first[0], display_name: first[1] ?? String(first[0]) };
-        }
       }
 
       // prix : pas de seller_ids offline → standard_price
@@ -249,6 +233,32 @@ onchangeRegistry.add("purchase.order:order_line#product", async (lines, values, 
         const d = new Date(orderDate + "T00:00:00");
         d.setDate(d.getDate() + delay);
         updated.date_planned = d.toISOString().slice(0, 10);
+      }
+    }
+
+    // ---- Fill DÉDIÉ des taxes (purchase.order.line._compute_tax_id, v17) ----
+    // Lignes nouvelles uniquement : taxes_id = MANY2MANY — taxes
+    // fournisseur (supplier_taxes_id, repli taxes_id du produit),
+    // MAPPÉES par la position fiscale du document (fpos.map_tax).
+    const isNewLine = line.id === undefined || line.id === null || line.id === false;
+    const taxCols = ["tax_ids", "taxes_id", "tax_id"].filter((f) => f in line);
+    if (isNewLine && taxCols.length && taxCols.some((f) => isEmptyCell(line[f]))) {
+      let p = product;
+      if (!p) p = await getProductRecordMemoized(pid, helpers);
+      if (p) {
+        const taxes = Array.isArray(p.supplier_taxes_id) && p.supplier_taxes_id.length
+          ? p.supplier_taxes_id
+          : p.taxes_id;
+        if (taxes && taxes.length) {
+          const mapped = await mapTaxesWithFpos(taxes, values.fiscal_position_id, helpers);
+          if (mapped.length) {
+            // tax_ids et taxes_id = MANY2MANY → tableau de paires
+            // [id, name] (le widget tags n'a besoin que des ids ; si une
+            // vue rendait la colonne en m2o, le moteur d'écriture prend
+            // le premier id — voir applyOne2manyPatch).
+            for (const f of taxCols) if (isEmptyCell(line[f])) updated[f] = mapped;
+          }
+        }
       }
     }
 

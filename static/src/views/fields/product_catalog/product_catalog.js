@@ -37,13 +37,22 @@ export function getExistingQuantitiesFromTbody(tbody, qtyField) {
 
   Array.from(tbody.querySelectorAll("tr.o_data_row")).forEach((tr) => {
     const cellRefs = tr._cellRefs;
-    if (!cellRefs || !cellRefs["product_id"] || !cellRefs[qtyField]) return;
+    if (!cellRefs || !cellRefs[qtyField]) return;
+    if (!cellRefs["product_id"] && !tr._productId) return;
 
-    const productWrapper = cellRefs["product_id"].el;
-    const hiddenInput = productWrapper?.querySelector('input[type="hidden"]');
     const qtyEl = cellRefs[qtyField].el;
 
-    const rawId = hiddenInput?.value || "";
+    // Id produit SYNCHRONE de la ligne en priorité (posé par addRow),
+    // input caché m2o en repli — celui-ci peut être vide juste après
+    // la création d'une ligne, et une ligne non comptée ici menait au
+    // doublon lors du prochain passage au catalogue.
+    let rawId = tr._productId !== undefined && tr._productId !== null && tr._productId !== false
+      ? String(tr._productId)
+      : "";
+    if (!rawId && cellRefs["product_id"]) {
+      const hiddenInput = cellRefs["product_id"].el?.querySelector?.('input[type="hidden"]');
+      rawId = hiddenInput?.value || "";
+    }
     if (!rawId || rawId.startsWith("tmp:")) return;
 
     const productId = parseInt(rawId, 10);

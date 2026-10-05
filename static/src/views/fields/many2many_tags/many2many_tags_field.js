@@ -36,8 +36,37 @@ export function renderMany2manyTagsField(name, info, node, initialValue) {
   wrapper.appendChild(inputWrap);
 
   let cachedRecords = [];
+
+  /**
+   * API EXTERNE (backfill des règles de lignes) : impose une liste d'ids
+   * au widget — synchronise l'état interne (badges) ET l'input caché.
+   * Sans elle, une règle qui n'écrivait que l'input caché laissait les
+   * badges visibles à l'état d'avant (ex: colonne Taxes vide malgré une
+   * taxe présente dans les données).
+   * Accepte des ids bruts, des paires [id, name] ou des objets {id, ...}.
+   */
+  function applyExternalIds(rawIds) {
+    const next = (Array.isArray(rawIds) ? rawIds : [])
+      .map((v) => {
+        const id = Array.isArray(v) ? v[0] : v && typeof v === "object" ? v.id : v;
+        if (id === false || id === null || id === undefined) return null;
+        const found = cachedRecords.find((r) => String(r.id) === String(id));
+        return [id, found ? found.display_name : String(id)];
+      })
+      .filter(Boolean);
+    selected = next;
+    renderTags();
+    syncHiddenValue();
+  }
+
   getReferenceRecords(info.relation).then((records) => {
     cachedRecords = records;
+    // Si des ids ont été posés par l'extérieur (backfill de règles) AVANT
+    // le chargement des références, leurs libellés sont encore des ids
+    // bruts — on re-rend les badges avec les vrais noms.
+    if (selected.length && selected.some(([id, label]) => label === String(id))) {
+      applyExternalIds(selected.map(([id]) => id));
+    }
   }).catch((err) => console.warn(`Relation ${info.relation}:`, err));
 
   // Synchronized hidden field so that FormData() captures the value.
@@ -121,6 +150,9 @@ export function renderMany2manyTagsField(name, info, node, initialValue) {
 
   renderTags();
   syncHiddenValue();
+
+  // Exposé au moteur d'écriture des backfills (applyOne2manyPatch).
+  wrapper._setM2mValue = applyExternalIds;
 
   return wrapper;
 }

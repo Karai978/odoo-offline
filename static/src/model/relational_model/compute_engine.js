@@ -153,7 +153,12 @@ export function attachComputeEngine(tbody, totalDisplayEl, parentValues, comodel
     }
   }
 
+  // "input" : frappe utilisateur. "change" : écritures programmées (backfill
+  // des règles de lignes — prix, taxes, désignation) — les deux sont
+  // nécessaires, sinon le total ne se met à jour que quand l'utilisateur
+  // retape dans une cellule.
   tbody.addEventListener("input", recompute);
+  tbody.addEventListener("change", recompute);
   recompute();
 
   const currencyId = parentValues && parentValues.currency_id;

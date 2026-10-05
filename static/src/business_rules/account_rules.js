@@ -23,7 +23,7 @@ import {
   onchangeRegistry,
   fieldComputeRegistry,
 } from "../model/relational_model/business_rules_registry.js";
-import { asM2o, m2oId, displayOf, isMissingRecord, fposForPartner, partnerWarning, docLinesAmounts, lineTaxIds, getTaxRecord, computeTaxAmounts } from "./rules_helpers.js";
+import { asM2o, m2oId, displayOf, isMissingRecord, fposForPartner, partnerWarning, docLinesAmounts, lineTaxIds, mapTaxesWithFpos, getProductRecordMemoized, getTaxRecord, computeTaxAmounts } from "./rules_helpers.js";
 
 const SALE_TYPES = ["out_invoice", "out_refund"];
 const PURCHASE_TYPES = ["in_invoice", "in_refund", "in_receipt"];
@@ -244,19 +244,17 @@ onchangeRegistry.add("account.move:invoice_line_ids#product", async (lines, valu
     const pid = line.product_id;
     if (!pid || typeof pid === "string") { filled.push(line); continue; }
 
+    // Backfill des champs dérivés — la colonne taxe a son propre fill
+    // dédié ci-dessous (lignes nouvelles uniquement, parité Odoo).
     const needsFill =
       ("name" in line && isEmptyCell(line.name)) ||
-      ("price_unit" in line && isEmptyCell(line.price_unit)) ||
-      ("tax_ids" in line && isEmptyCell(line.tax_ids));
+      ("price_unit" in line && isEmptyCell(line.price_unit));
 
+    // Lecture produit : cache d'abord, un fetch, mémo d'échec 5 min.
     let product = null;
     if (needsFill) {
-      try {
-        product = await helpers.getRecordSmart("product.product", pid, helpers.apiKey, helpers.baseUrl);
-      } catch (err) {
-        product = null;
-      }
-      if (isMissingRecord(product)) { filled.push(line); continue; }
+      product = await getProductRecordMemoized(pid, helpers);
+      if (!product) { filled.push(line); continue; }
     }
 
     const updated = { ...line };
@@ -270,17 +268,29 @@ onchangeRegistry.add("account.move:invoice_line_ids#product", async (lines, valu
       if (!updated.name && parts.length) updated.name = parts.join("\n");
       else if (!updated.name) updated.name = product.name || "";
 
-      // taxes : taxes_id du produit (le filtre par pays du partner —
-      // _compute_tax_ids — est un calcul serveur ; approximation : taxes
-      // brutes du produit, documenté). tax_ids = many2many (tags).
-      const taxes = Array.isArray(product.taxes_id) ? product.taxes_id : [];
-      if (taxes.length && "tax_ids" in updated && isEmptyCell(line.tax_ids)) {
-        updated.tax_ids = taxes.map((t) => (Array.isArray(t) ? t : [t, t]));
-      }
-
       // prix : list_price (vente) / standard_price (achat)
       if ("price_unit" in updated && isEmptyCell(line.price_unit)) {
         updated.price_unit = Number(isSale ? product.list_price : product.standard_price) || 0;
+      }
+    }
+
+    // ---- Fill DÉDIÉ des taxes (account.move.line._compute_tax_ids, v17) ----
+    // Lignes nouvelles uniquement : taxes_id du produit MAPPÉES par la
+    // position fiscale du document (fpos.map_tax) ; le filtre par pays
+    // du partner est un calcul serveur (approximation documentée).
+    const isNewLine = line.id === undefined || line.id === null || line.id === false;
+    const taxCols = ["tax_ids", "taxes_id", "tax_id"].filter((f) => f in line);
+    if (isNewLine && taxCols.length && taxCols.some((f) => isEmptyCell(line[f]))) {
+      let p = product;
+      if (!p) p = await getProductRecordMemoized(pid, helpers);
+      if (p) {
+        const taxes = Array.isArray(p.taxes_id) ? p.taxes_id : [];
+        if (taxes.length) {
+          const mapped = await mapTaxesWithFpos(taxes, values.fiscal_position_id, helpers);
+          if (mapped.length) {
+            for (const f of taxCols) if (isEmptyCell(line[f])) updated[f] = mapped;
+          }
+        }
       }
     }
 

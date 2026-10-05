@@ -494,3 +494,37 @@ s'écrit donc dans aucun cell du tableau. Les totaux ne peuvent plus
   "valeur serveur" hors-ligne) ;
 - `read_record` sur **`product.product`** doit renvoyer `taxes_id`
   (source des taxes par défaut des nouvelles lignes).
+
+#### Correction v3 — types de champs taxes v17 + mapping position fiscale
+Vérification du code source 17.0 (sale/models/sale_order_line.py,
+purchase/models/purchase_order_line.py, account/models/partner.py) :
+- **sale.order.line.tax_id = Many2many** (nom trompeur !), calculé par
+  `_compute_tax_id` = `fpos.map_tax(product.taxes_id)` (filtre société) ;
+- **purchase.order.line.taxes_id = Many2many** = `fpos.map_tax(supplier_taxes_id)` ;
+- **account.fiscal.position.map_tax** : chaque taxe est remplacée par sa
+  `tax_dest_id` si la position a une correspondance active
+  (`tax_src_id`/`tax_dest_active`), supprimée si la dest est vide,
+  conservée sinon. C'est ce mapping qui produit p. ex. « produit 3 % →
+  ligne 15 % » — la PWA l'applique maintenant via
+  `rules_helpers.mapTaxesWithFpos` (correspondances lues dans le record
+  de la position servi par read_record).
+Conséquences appliquées :
+- les règles écrivent les taxes en **tableau** (format m2m) ; le widget
+  many2many_tags expose `_setM2mValue(ids)` : les BADGES visibles sont
+  synchronisés par les backfills (avant, seules les données cachées
+  étaient écrites → colonne vide à l'écran) ;
+- le fill taxes est DEDICÉ (hors `needsFill`) et réservé aux lignes
+  NOUVELLES (sans id) — parité avec `_compute_tax_id` qui ne se relance
+  que lors du choix du produit ; une ligne serveur à taxe vide n'est pas
+  re-remplie ;
+- lecture produit `getProductRecordMemoized` : cache d'abord, un fetch,
+  mémo d'échec 5 min (anti-spam réseau, même classe que le mémo
+  références de la phase 4) ;
+- **doublon catalogue** : l'id produit d'une ligne est conservé de façon
+  SYNCHRONE (`tr._productId`) — la recherche de ligne existante du
+  catalogue ne dépend plus de l'input caché m2o dont la valeur initiale
+  était posée en retard (asynchrone) ; idem pour
+  `getExistingQuantitiesFromTbody` ;
+- pied de tableau : écoute `change` EN PLUS de `input` — les écritures
+  programmées des backfills mettaient à jour les cellules par `change`
+  seulement, le total ne se recalculait donc que si l'utilisateur retapait.

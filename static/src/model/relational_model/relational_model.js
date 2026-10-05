@@ -126,22 +126,20 @@ function applyOne2manyPatch(containerEl, fieldName, lines, fieldsInfo) {
 
       if (finfo && finfo.type === "many2many") {
         // Widget many2many_tags : l'input caché attend un JSON de ids
-        // (cf. syncHiddenValue de many2many_tags_field.js). Les badges
-        // visibles ne sont pas ré-éditables depuis l'extérieur (état en
-        // closure) — ils se rafraîchiront au prochain rendu du formulaire
-        // (recharge post-save, réouverture) ; la donnée (payload) est
-        // immédiatement correcte.
+        // (cf. syncHiddenValue de many2many_tags_field.js). Si le widget
+        // expose _setM2mValue, on passe par lui pour synchroniser aussi
+        // les BADGES visibles (état interne en closure) — sinon la
+        // colonne resterait vide à l'écran malgré des données correctes.
         const cell = ref.el;
-        const hidden = cell.querySelector('input[type="hidden"]');
-        if (hidden) {
-          const ids = (Array.isArray(val) ? val : [])
-            .map((t) => (Array.isArray(t) ? t[0] : t))
-            .filter((x) => x !== false && x !== null && x !== undefined);
-          const json = JSON.stringify(ids);
-          if (hidden.value !== json) {
-            hidden.value = json;
-            anyChanged = true;
-          }
+        const ids = (Array.isArray(val) ? val : [])
+          .map((t) => (Array.isArray(t) ? t[0] : t && typeof t === "object" ? t.id : t))
+          .filter((x) => x !== false && x !== null && x !== undefined);
+        const json = JSON.stringify(ids);
+        const hidden = typeof cell.querySelector === "function" ? cell.querySelector('input[type="hidden"]') : null;
+        if (hidden && hidden.value !== json) {
+          if (typeof cell._setM2mValue === "function") cell._setM2mValue(ids);
+          else hidden.value = json;
+          anyChanged = true;
         }
         continue;
       }
@@ -160,10 +158,18 @@ function applyOne2manyPatch(containerEl, fieldName, lines, fieldsInfo) {
             anyChanged = true;
           }
         } else if (Array.isArray(val)) {
-          // Défensif : un tableau reçu sur un champ many2one (une règle
-          // qui aurait écrit des taxes m2m dans un champ m2o unique) —
-          // on ne peut pas écrire un tel valeur : on ignore (jamais de
-          // "undefined" dans le DOM).
+          // Un tableau reçu sur un champ many2one (une règle qui écrit
+          // des taxes m2m — tax_id/taxes_id le sont en v17 — dans une
+          // colonne rendue en m2o) : on écrit le PREMIER id ; le
+          // libellé s'il y en a un est pris en charge.
+          const first = val.find((x) => x !== false && x !== null && x !== undefined);
+          if (first !== undefined) {
+            const firstId = Array.isArray(first) ? first[0] : first && typeof first === "object" ? first.id : first;
+            if (hidden && hidden.value !== String(firstId)) {
+              hidden.value = String(firstId);
+              anyChanged = true;
+            }
+          }
           continue;
         } else if (val === false || val === null || val === undefined) {
           if (hidden && hidden.value !== "") {

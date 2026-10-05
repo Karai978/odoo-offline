@@ -70,11 +70,20 @@ export function renderMany2oneField(name, info, node, initialValue) {
   wrapper.appendChild(dropdown);
 
   let cachedRecords = [];
+  // L'id caché est posé SYNCHRONONEMENT : la logique qui lit les lignes
+  // (règles de backfill, catalogue — recherche de ligne existante,
+  // getExistingQuantitiesFromTbody) dépend de lui IMMÉDIATEMENT après
+  // création de la ligne. Avant (écrit dans le .then), une ligne ajoutée
+  // via le catalogue n'était pas « visible » pendant la résolution des
+  // références → doublon de ligne + backfill non déclenché.
+  if (initialValue !== undefined && initialValue !== null && initialValue !== false && initialValue !== "") {
+    hiddenId.value = initialValue;
+  }
   getReferenceRecords(info.relation).then((records) => {
     cachedRecords = records;
     if (initialValue) {
-      hiddenId.value = initialValue;
-      const found = cachedRecords.find((r) => r.id === initialValue);
+      if (!hiddenId.value) hiddenId.value = initialValue;
+      const found = cachedRecords.find((r) => String(r.id) === String(initialValue));
       if (found) input.value = found.display_name;
     }
   }).catch((err) => console.warn(`Relation ${info.relation}:`, err));
