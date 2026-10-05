@@ -459,7 +459,26 @@ export function renderOne2manyField(name, info, node, initialValue, parentValues
         rowData["price_total"] = subtotal;
       }
 
-      addRow(rowData);
+      // Taxes du produit (si le payload catalogue les fournit — le
+      // backfill de ligne les remplira sinon depuis le record produit).
+      const productTaxes = product && Array.isArray(product.taxes_id) ? product.taxes_id : null;
+      if (productTaxes && productTaxes.length) {
+        const first = productTaxes[0];
+        const firstId = Array.isArray(first) ? first[0] : first;
+        if (subFields["tax_ids"]) {
+          rowData["tax_ids"] = productTaxes.map((t) => (Array.isArray(t) ? t : [t, t]));
+        } else if (subFields["tax_id"] && firstId) {
+          rowData["tax_id"] = firstId;
+        } else if (subFields["taxes_id"] && firstId) {
+          rowData["taxes_id"] = firstId;
+        }
+      }
+
+      const tr = addRow(rowData);
+      // Déclenche les règles de backfill (taxes, désignation, unité…)
+      // sur la ligne nouvelle — sans cela elle resterait vide de champs
+      // dérivés tant que l'utilisateur ne toucherait aucun champ.
+      triggerRowChange(tr, qtyField);
     });
   }
 
@@ -500,7 +519,29 @@ export function renderOne2manyField(name, info, node, initialValue, parentValues
 
     tr._recordId = rowData.id || null;
     tr._cellRefs = cellRefs;
+    // Données COMPLETES initiales de la ligne (tous les champs servis,
+    // y compris ceux non rendus par la vue : price_tax, price_total,
+    // price_subtotal…) — servies au moteur de taxes pour le repli
+    // hors-ligne quand le record account.tax n'est pas en cache.
+    tr._serverData = rowData;
     tbody.insertBefore(tr, addRowTr);
+    return tr;
+  }
+
+  /**
+   * Ré-émet "change" sur une ligne créée : indispensable pour que les
+   * règles de backfill (taxes, désignation, prix, unité) s'exécutent —
+   * sinon une ligne ajoutée sans édition reste vide de champs dérivés.
+   */
+  function triggerRowChange(tr, preferredField) {
+    const ref = (preferredField && tr._cellRefs && tr._cellRefs[preferredField]) ||
+      Object.values(tr._cellRefs || {})[0];
+    if (!ref || typeof ref.el === "undefined") return;
+    const target =
+      typeof ref.el.matches === "function" && ref.el.matches("input, select, textarea")
+        ? ref.el
+        : (typeof ref.el.querySelector === "function" ? ref.el.querySelector("input, select, textarea") : null);
+    if (target) target.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
   const totalRow = document.createElement("div");

@@ -206,7 +206,12 @@ export function todayISO() {
  * Récupère un enregistrement account.tax : CACHE D'ABORD (zéro réseau),
  * puis un fetch unique en ligne (qui met le record en cache pour la
  * suite — pas de spam type product.uom). Null si introuvable.
+ *
+ * Un mémo "in-flight" par id évite les fetchs en double quand plusieurs
+ * recalculs parallèles (pied de tableau + computes de totaux) demandent
+ * la même taxe au même moment.
  */
+const _taxInflight = new Map();
 export async function getTaxRecord(taxId, helpers) {
   const id = m2oId(taxId);
   if (!id) return null;
@@ -216,14 +221,15 @@ export async function getTaxRecord(taxId, helpers) {
   } catch (err) {
     /* cache illisible — on tente le réseau */
   }
-  if (navigator.onLine) {
-    try {
-      return await fetchAndStoreRecord("account.tax", id, helpers.apiKey, helpers.baseUrl);
-    } catch (err) {
-      return null; // pas en cache, hors-ligne ou backend indisponible
-    }
-  }
-  return null;
+  if (!navigator.onLine) return null;
+  const key = String(id);
+  if (_taxInflight.has(key)) return _taxInflight.get(key);
+  const pending = fetchAndStoreRecord("account.tax", id, helpers.apiKey, helpers.baseUrl)
+    .then((rec) => rec || null)
+    .catch(() => null) // pas en cache, hors-ligne ou backend indisponible
+    .finally(() => _taxInflight.delete(key));
+  _taxInflight.set(key, pending);
+  return pending;
 }
 
 /**
@@ -284,4 +290,164 @@ export function defaultLineTotal(line) {
   return Number(
     ((isNaN(subtotal) ? 0 : subtotal) + (isNaN(tax) ? 0 : tax)).toFixed(2)
   );
+}
+
+/* ------------------------------------------------------------------ */
+/* Totaux document avec taxes — lecture commune aux computes de champs */
+/* et au pied de tableau (compute_engine)                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Ids des taxes d'une ligne, quel que soit le nom de colonne rendu par
+ * la vue : tax_id (m2o unique — vente/achat v17), taxes_id (m2o unique
+ * OU m2m), tax_ids (m2m — factures). Les valeurs collectées peuvent être
+ * des ids bruts, des paires [id, name] ou des objets {id, ...}.
+ */
+export function lineTaxIds(line) {
+  if (!line) return [];
+  const ids = [];
+  const push = (id) => {
+    if (id === false || id === null || id === undefined) return;
+    if (!ids.some((x) => String(x) === String(id))) ids.push(id);
+  };
+  if (Array.isArray(line.tax_ids)) {
+    for (const t of line.tax_ids) push(Array.isArray(t) ? t[0] : t && typeof t === "object" ? t.id : t);
+  }
+  push(m2oId(line.tax_id));
+  const taxesCol = line.taxes_id;
+  if (Array.isArray(taxesCol)) {
+    // taxes_id rendu comme many2many (vue custom) : liste d'ids/paires
+    for (const t of taxesCol) push(Array.isArray(t) ? t[0] : t && typeof t === "object" ? t.id : t);
+  } else {
+    push(m2oId(taxesCol));
+  }
+  return ids;
+}
+
+/** Sous-total d'une ligne depuis ses cellules : qty × prix × (1 − remise/100). */
+export function lineSubtotalOf(line, qtyField) {
+  if (!line) return 0;
+  const qty = Number(line[qtyField]) || 0;
+  const price = Number(line.price_unit) || 0;
+  const disc = Number(line.discount) || 0;
+  return Number((qty * price * (1 - disc / 100)).toFixed(2));
+}
+
+/**
+ * Résout le montant de taxe d'une ligne — le point UNIQUE de décision :
+ *  1. record(s) account.tax lisible(s) (cache d'abord, réseau ensuite)
+ *     → calcul du moteur approximatif (HT / TTC / montant fixe) ;
+ *  2. ids de taxes déclarés mais aucun record lisible (hors-ligne, jamais
+ *     chargée) → la price_tax SERVEUR de la ligne initiale est conservée
+ *     et mise à l'échelle du nouveau sous-total (exact pour les taxes en
+ *     pourcentage ; approximation documentée sinon) ;
+ *  3. aucune donnée → taxe 0.
+ *
+ * @param {Array} taxIds - ids des taxes de la ligne
+ * @param {number} base - sous-total courant (après remise)
+ * @param {number} quantity
+ * @param {object|null} serverAmounts - { price_tax, price_subtotal } de la
+ *   ligne TELLE QUE SERVIE (données initiales, même si non rendues en vue)
+ * @returns {Promise<{tax: number, included: boolean, source: "engine"|"server"|"none"|"unknown">}}
+ */
+export async function resolveLineTax(taxIds, base, quantity, serverAmounts, helpers) {
+  if (!Array.isArray(taxIds) || taxIds.length === 0) {
+    return { tax: 0, included: false, source: "none" };
+  }
+  const records = [];
+  for (const id of taxIds) {
+    const rec = await getTaxRecord(id, helpers);
+    if (rec) records.push(rec);
+  }
+  if (records.length) {
+    const { tax_amount, included } = computeTaxAmounts(base, quantity, records);
+    return { tax: tax_amount, included, source: "engine" };
+  }
+  const serverTax = serverAmounts ? Number(serverAmounts.price_tax) : NaN;
+  if (isFinite(serverTax) && serverTax > 0) {
+    const serverSub = Number(serverAmounts.price_subtotal) || 0;
+    const factor = serverSub > 0 ? base / serverSub : 1;
+    return { tax: Number((serverTax * factor).toFixed(2)), included: false, source: "server" };
+  }
+  return { tax: 0, included: false, source: "unknown" };
+}
+
+/**
+ * Somme les lignes d'un document avec leurs taxes — alimente à la fois
+ * les computes de champs (amount_total / amount_tax / amount_untaxed) et
+ * le pied de tableau.
+ *
+ * @param {object[]} lines - lignes collectées (collectFormData, dans
+ *   l'ordre des lignes du DOM, tombstones {id,_deleted} en fin de liste)
+ * @param {object[]|null} serverRows - données complètes initiales des
+ *   lignes (tr._serverData), MÊME ordre que les lignes non supprimées
+ * @param {object} helpers
+ * @param {string} qtyField - nom du champ quantité du modèle
+ */
+export async function sumLinesWithTax(lines, serverRows, helpers, qtyField) {
+  let total = 0;
+  let taxSum = 0;
+  if (!Array.isArray(lines)) return { total: 0, tax: 0, untaxed: 0 };
+  let serverIdx = 0;
+  for (const line of lines) {
+    if (!line || line._deleted) continue; // tombstone de suppression (pas de tr)
+    const server = serverRows && serverIdx < serverRows.length ? serverRows[serverIdx] : null;
+    serverIdx++;
+    if (line.display_type) continue; // sections / notes (comme côté serveur)
+
+    const collectedSub = parseFloat(line.price_subtotal);
+    const subtotal =
+      line.price_subtotal !== undefined && line.price_subtotal !== false && line.price_subtotal !== "" && !isNaN(collectedSub)
+        ? Number(line.price_subtotal)
+        : lineSubtotalOf(line, qtyField);
+    const qty = Number(line[qtyField]) || 0;
+
+    let tax = 0;
+    let included = false;
+    const taxIds = lineTaxIds(line);
+    if (taxIds.length) {
+      const res = await resolveLineTax(taxIds, subtotal, qty, server, helpers);
+      tax = res.tax;
+      included = res.included;
+    } else {
+      // pas de taxe déclarée : si la vue rend une colonne price_tax,
+      // on suit sa valeur (les règles la mettent à 0 si la taxe est retirée)
+      const collectedTax = parseFloat(line.price_tax);
+      if (line.price_tax !== undefined && line.price_tax !== false && line.price_tax !== "" && !isNaN(collectedTax)) {
+        tax = Number(line.price_tax);
+      }
+    }
+    taxSum += tax;
+    total += included ? subtotal : subtotal + tax;
+  }
+  return {
+    total: Number(total.toFixed(2)),
+    tax: Number(taxSum.toFixed(2)),
+    untaxed: Number((total - taxSum).toFixed(2)),
+  };
+}
+
+/**
+ * Totaux d'un document depuis les valeurs du formulaire courant : trouve
+ * le one2many de lignes par son nom de champ et croise les valeurs
+ * collectées avec les données initiales des lignes (tr._serverData) pour
+ * le repli "valeur serveur" hors-ligne.
+ */
+export async function docLinesAmounts(values, containerEl, linesField, qtyField, helpers) {
+  const lines = values && Array.isArray(values[linesField]) ? values[linesField] : [];
+  let serverRows = null;
+  if (containerEl && typeof containerEl.querySelector === "function") {
+    try {
+      const wrapper = containerEl.querySelector(`[data-one2many="${linesField}"] [data-o2m-root="true"]`);
+      const tbody = wrapper && typeof wrapper._getTbody === "function" ? wrapper._getTbody() : null;
+      if (tbody) {
+        serverRows = Array.from(tbody.querySelectorAll("tr"))
+          .filter((tr) => tr._cellRefs)
+          .map((tr) => tr._serverData || null);
+      }
+    } catch (err) {
+      serverRows = null;
+    }
+  }
+  return sumLinesWithTax(lines, serverRows, helpers, qtyField);
 }

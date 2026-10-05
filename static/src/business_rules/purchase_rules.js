@@ -23,7 +23,8 @@ import {
   constraintsRegistry,
   fieldComputeRegistry,
 } from "../model/relational_model/business_rules_registry.js";
-import { asM2o, m2oId, displayOf, isMissingRecord, fposForPartner, partnerWarning, sumLineField, defaultLineTotal, getTaxRecord, computeTaxAmounts } from "./rules_helpers.js";
+import { asM2o, m2oId, displayOf, isMissingRecord, fposForPartner, partnerWarning, docLinesAmounts, lineTaxIds, getTaxRecord, computeTaxAmounts } from "./rules_helpers.js";
+
 
 /* ================================================================== */
 /* purchase.order — onchange partner_id (méthode source Odoo 17)       */
@@ -131,12 +132,18 @@ fieldComputeRegistry.add("purchase.order:date_planned", (values) => {
   return dates.length ? dates.sort()[0] : undefined;
 });
 
-// _compute_amounts (même convention que ventes : total = Σ price_total,
-// tax = Σ price_tax, untaxed = total − tax)
-fieldComputeRegistry.add("purchase.order:amount_total", (values) => sumLineField(values.order_line, "price_total", defaultLineTotal));
-fieldComputeRegistry.add("purchase.order:amount_tax", (values) => sumLineField(values.order_line, "price_tax"));
-fieldComputeRegistry.add("purchase.order:amount_untaxed", (values) =>
-  Number((sumLineField(values.order_line, "price_total", defaultLineTotal) - sumLineField(values.order_line, "price_tax")).toFixed(2))
+// _compute_amounts : somme des lignes AVEC taxes (même convention que
+// ventes — la vue ne rendant pas de colonnes price_tax/price_total, la
+// taxe de chaque ligne est résolue par le moteur offline, avec repli sur
+// la price_tax serveur de la ligne initiale en hors-ligne).
+fieldComputeRegistry.add("purchase.order:amount_total", async (values, helpers, containerEl) =>
+  (await docLinesAmounts(values, containerEl, "order_line", "product_qty", helpers)).total
+);
+fieldComputeRegistry.add("purchase.order:amount_tax", async (values, helpers, containerEl) =>
+  (await docLinesAmounts(values, containerEl, "order_line", "product_qty", helpers)).tax
+);
+fieldComputeRegistry.add("purchase.order:amount_untaxed", async (values, helpers, containerEl) =>
+  (await docLinesAmounts(values, containerEl, "order_line", "product_qty", helpers)).untaxed
 );
 
 /* ================================================================== */
@@ -251,17 +258,14 @@ onchangeRegistry.add("purchase.order:order_line#product", async (lines, values, 
     const discount = Number(updated.discount) || 0;
     const subtotal = Number((qty * price * (1 - discount / 100)).toFixed(2));
 
-    // taxes de la ligne : tax_ids (m2m — paires [id, name]) sinon taxes_id
-    // (m2o). Trois cas : id(s) connu(s) + record(s) lisible(s) → calcul ;
-    // id déclaré mais record non en cache (offline) → valeur serveur
-    // conservée ; pas de taxe / colonne absente → 0 ou valeur conservée.
-    const hasTaxCol = "tax_ids" in line || "tax_ids" in updated || "taxes_id" in line || "taxes_id" in updated;
+    // taxes de la ligne : toutes les colonnes taxes rendues (taxes_id m2o
+    // unique v17, tax_ids m2m). Quatre cas : id(s) connu(s) + record(s)
+    // lisible(s) → calcul ; id déclaré mais record non en cache (offline)
+    // → valeur serveur conservée ; colonne vide → 0 ; colonne absente →
+    // valeur serveur conservée.
+    const hasTaxCol = ["tax_id", "taxes_id", "tax_ids"].some((f) => f in line || f in updated);
     let taxAmount;
-    const taxIds = hasTaxCol
-      ? (Array.isArray(updated.tax_ids)
-          ? updated.tax_ids.map((t) => (Array.isArray(t) ? t[0] : t)).filter(Boolean)
-          : (m2oId(updated.taxes_id) || m2oId(line.taxes_id) ? [m2oId(updated.taxes_id) || m2oId(line.taxes_id)] : []))
-      : [];
+    const taxIds = hasTaxCol ? lineTaxIds(updated) : [];
     if (taxIds.length) {
       const taxRecords = [];
       for (const tid of taxIds) {
@@ -292,10 +296,16 @@ onchangeRegistry.add("purchase.order:order_line#product", async (lines, values, 
       updated.price_unit_discounted = Number((price * (1 - discount / 100)).toFixed(2));
     }
 
-    // Idempotence : montants inchangés et rien à remplir → ligne telle quelle
+    // Idempotence : montants inchangés et rien à remplir → ligne telle
+    // quelle. Un montant ABSENT de la vue (colonne non rendue → non
+    // collectée) ne doit pas casser l'idempotence : on ne compare que
+    // les clés présentes dans la ligne collectée.
     const sameMoney = (a, b) => num2(a).toFixed(2) === num2(b).toFixed(2);
     const fillApplied = needsFill && !!product;
-    if (!fillApplied && sameMoney(subtotal, line.price_subtotal) && sameMoney(taxAmount, line.price_tax) && sameMoney(updated.price_total, line.price_total)) {
+    const idemSub = !("price_subtotal" in line) || sameMoney(subtotal, line.price_subtotal);
+    const idemTax = !("price_tax" in line) || sameMoney(taxAmount, line.price_tax);
+    const idemTot = !("price_total" in line) || sameMoney(updated.price_total, line.price_total);
+    if (!fillApplied && idemSub && idemTax && idemTot) {
       filled.push(line);
       continue;
     }

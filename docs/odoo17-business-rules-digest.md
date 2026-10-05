@@ -451,3 +451,46 @@ Fichiers lus : `addons/web/static/src/model/relational_model/relational_model.js
 - **Idempotence** : ligne dont les montants ne changent pas → renvoyée
   telle quelle (aucun écrit DOM, aucune cascade, aucun refetch produit ni
   tax record).
+
+#### Totaux document & pied de tableau avec taxes (v2)
+La vue standard v17 ne rend PAS de colonnes `price_tax` / `price_total`
+sur les lignes : le montant de taxe calculé par les règles de lignes ne
+s'écrit donc dans aucun cell du tableau. Les totaux ne peuvent plus
+"suivre" une colonne — ils résolvent la taxe de chaque ligne :
+
+- **`resolveLineTax(taxIds, base, qty, serverAmounts, helpers)`**
+  (rules_helpers.js) — point unique de décision :
+  1. record(s) `account.tax` lisible(s) (cache d'abord, réseau ensuite,
+     fetch in-flight dédoublonné) → calcul du moteur approximatif ;
+  2. ids déclarés mais record(s) absent(s) du cache (hors-ligne) →
+     `price_tax` **serveur** de la ligne initiale (`tr._serverData`),
+     mise à l'échelle du nouveau sous-total (exact pour les taxes en %) ;
+  3. aucune donnée → 0.
+- **`sumLinesWithTax` / `docLinesAmounts`** — somment les lignes
+  (sous-total + taxe ; lignes TTC : total = sous-total) et alimentent
+  `amount_total` / `amount_tax` / `amount_untaxed` (computes de champs,
+  qui reçoivent désormais le conteneur DOM en 3e argument).
+- **Pied de tableau** (compute_engine.js) — même résolution : le "Total:"
+  sous le tableau = Σ (sous-total + taxe). Rechargement asynchrone avec
+  un seul calcul en vol à la fois.
+- **`tr._serverData`** (x2many_field.js) — les données complètes initiales
+  de chaque ligne (tous les champs servis, y compris non rendus) sont
+  conservées sur la `<tr>` pour le repli hors-ligne.
+- **Catalogue** (x2many_field.js) — une ligne créée via le catalogue
+  déclenche désormais un `change` pour lancer le backfill (taxes,
+  désignation, unité) ; les taxes du payload catalogue sont pré-remplies
+  si fournies.
+- **Idempotence** (règles de lignes) — on ne compare que les clés
+  présentes dans la ligne collectée : une colonne `price_tax`/
+  `price_total` absente de la vue ne fait plus bloquer la stabilisation
+  de la règle.
+- **`lineTaxIds(line)`** — ids de taxes de la ligne quel que soit le nom
+  de colonne rendu (`tax_id` m2o, `taxes_id` m2o ou m2m, `tax_ids` m2m),
+  dédoublonnés.
+
+##### Prérequis backend (`offline_sync`, côté Odoo)
+- `read_record` doit autoriser le modèle **`account.tax`** (sinon la taxe
+  n'est calculable qu'une fois le record vu en cache — ou reste le repli
+  "valeur serveur" hors-ligne) ;
+- `read_record` sur **`product.product`** doit renvoyer `taxes_id`
+  (source des taxes par défaut des nouvelles lignes).

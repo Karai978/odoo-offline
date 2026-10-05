@@ -28,7 +28,7 @@ import {
   constraintsRegistry,
   fieldComputeRegistry,
 } from "../model/relational_model/business_rules_registry.js";
-import { asM2o, m2oId, displayOf, isMissingRecord, fposForPartner, partnerWarning, sumLineField, defaultLineTotal, getTaxRecord, computeTaxAmounts, todayISO } from "./rules_helpers.js";
+import { asM2o, m2oId, displayOf, isMissingRecord, fposForPartner, partnerWarning, docLinesAmounts, lineTaxIds, getTaxRecord, computeTaxAmounts, todayISO } from "./rules_helpers.js";
 
 /* ================================================================== */
 /* Helpers internes au domaine Ventes                                  */
@@ -229,15 +229,21 @@ onchangeRegistry.add("sale.order:partner_id#partner_warn", async (partnerId, val
 /* sale.order — computes de champ (offline_field_compute)              */
 /* ================================================================== */
 
-// _compute_amounts : somme des lignes.
-// total = Σ price_total ; tax = Σ price_tax ; untaxed = total − tax
-// (formulation qui reste juste avec des taxes « prix TTC » price_include,
-// où le total d'une ligne = son sous-total).
+// _compute_amounts : somme des lignes AVEC taxes.
+// La vue standard ne rend PAS de colonnes price_tax / price_total :
+// on résout donc la taxe de chaque ligne via le moteur offline
+// (record account.tax en cache, repli sur la price_tax serveur de la
+// ligne initiale quand le record est introuvable hors-ligne).
 const SALE_LINES = "order_line";
-fieldComputeRegistry.add("sale.order:amount_total", (values) => sumLineField(values[SALE_LINES], "price_total", defaultLineTotal));
-fieldComputeRegistry.add("sale.order:amount_tax", (values) => sumLineField(values[SALE_LINES], "price_tax"));
-fieldComputeRegistry.add("sale.order:amount_untaxed", (values) =>
-  Number((sumLineField(values[SALE_LINES], "price_total", defaultLineTotal) - sumLineField(values[SALE_LINES], "price_tax")).toFixed(2))
+const SALE_QTY = "product_uom_qty";
+fieldComputeRegistry.add("sale.order:amount_total", async (values, helpers, containerEl) =>
+  (await docLinesAmounts(values, containerEl, SALE_LINES, SALE_QTY, helpers)).total
+);
+fieldComputeRegistry.add("sale.order:amount_tax", async (values, helpers, containerEl) =>
+  (await docLinesAmounts(values, containerEl, SALE_LINES, SALE_QTY, helpers)).tax
+);
+fieldComputeRegistry.add("sale.order:amount_untaxed", async (values, helpers, containerEl) =>
+  (await docLinesAmounts(values, containerEl, SALE_LINES, SALE_QTY, helpers)).untaxed
 );
 
 // _compute_is_expired : draft/sent et validity_date < aujourd'hui
@@ -411,25 +417,31 @@ onchangeRegistry.add("sale.order:order_line#product", async (lines, values, help
     const discount = num(updated.discount);
     const subtotal = Number((qty * price * (1 - discount / 100)).toFixed(2));
 
-    // taxe de la ligne : tax_id (m2o unique — id entier ou {id, display_name}).
-    // Trois cas :
-    //  - id de taxe connu + record lisible → calcul du moteur approximatif
-    //    (prix TTC : le total reste le sous-total, comme Odoo) ;
-    //  - id de taxe déclaré mais record non en cache (offline) → INCONNUE :
+    // taxes de la ligne : TOUTES les colonnes taxes rendues par la vue
+    // (tax_id m2o unique v17, taxes_id / tax_ids additionnelles).
+    // Quatre cas :
+    //  - id(s) connu(s) + record(s) lisible(s) → calcul du moteur
+    //    approximatif (prix TTC : le total reste le sous-total, comme Odoo) ;
+    //  - id(s) déclaré(s) mais record(s) non en cache (offline) → INCONNUE :
     //    price_tax serveur conservée, ajoutée au total ;
-    //  - pas de taxe (colonne vide ou absente de la vue) → valeur existante
-    //    conservée si la colonne est absente (taxe inconnue), sinon 0.
+    //  - colonne taxe présente mais vide → 0 ;
+    //  - aucune colonne taxe dans la vue → valeur serveur conservée.
     let taxAmount;
-    const hasTaxCol = "tax_id" in line || "tax_id" in updated;
-    const taxId = hasTaxCol ? (m2oId(updated.tax_id) || m2oId(line.tax_id)) : false;
-    if (taxId) {
-      const taxRec = await getTaxRecord(taxId, helpers);
-      if (taxRec) {
-        const { tax_amount, included } = computeTaxAmounts(subtotal, qty, [taxRec]);
+    const hasTaxCol = ["tax_id", "taxes_id", "tax_ids"].some((f) => f in line || f in updated);
+    const taxIds = hasTaxCol ? lineTaxIds(updated) : [];
+    if (taxIds.length) {
+      const taxRecords = [];
+      for (const tid of taxIds) {
+        const rec = await getTaxRecord(tid, helpers);
+        if (rec) taxRecords.push(rec);
+      }
+      if (taxRecords.length) {
+        const { tax_amount, included } = computeTaxAmounts(subtotal, qty, taxRecords);
         taxAmount = tax_amount;
         updated.price_tax = taxAmount;
         updated.price_total = Number((included ? subtotal : subtotal + taxAmount).toFixed(2));
       } else {
+        // taxe(s) déclarée(s) mais pas en cache (offline) → valeur serveur
         taxAmount = num(line.price_tax);
         updated.price_total = Number((subtotal + taxAmount).toFixed(2));
       }
@@ -438,6 +450,7 @@ onchangeRegistry.add("sale.order:order_line#product", async (lines, values, help
       updated.price_tax = 0;
       updated.price_total = subtotal;
     } else {
+      // aucune colonne taxe rendue : valeur serveur conservée
       taxAmount = num(line.price_tax);
       updated.price_total = Number((subtotal + taxAmount).toFixed(2));
     }
@@ -445,9 +458,15 @@ onchangeRegistry.add("sale.order:order_line#product", async (lines, values, help
 
     // Idempotence : si les montants ne changent pas et qu'il n'y a rien à
     // remplir, on renvoie la ligne telle quelle (aucun écrit DOM, aucune
-    // cascade, aucun refetch de produit).
+    // cascade, aucun refetch de produit). Un montant ABSENT de la vue
+    // (colonne non rendue → non collectée) ne doit pas casser
+    // l'idempotence : on ne compare que les clés présentes dans la
+    // ligne collectée.
     const fillApplied = needsFill && !!product;
-    if (!fillApplied && sameMoney(subtotal, line.price_subtotal) && sameMoney(taxAmount, line.price_tax) && sameMoney(updated.price_total, line.price_total)) {
+    const idemSub = !("price_subtotal" in line) || sameMoney(subtotal, line.price_subtotal);
+    const idemTax = !("price_tax" in line) || sameMoney(taxAmount, line.price_tax);
+    const idemTot = !("price_total" in line) || sameMoney(updated.price_total, line.price_total);
+    if (!fillApplied && idemSub && idemTax && idemTot) {
       filled.push(line);
       continue;
     }

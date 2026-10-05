@@ -258,12 +258,15 @@ export function attachLiveBusinessRules(archXmlString, containerEl, fieldsInfo, 
           applyDynamicAttrs(node, wrapperEl, currentValues);
         });
 
-        // Computes de champ : fn(values, helpers) => valeur | undefined
+        // Computes de champ : fn(values, helpers, containerEl) => valeur | undefined
+        // (containerEl permet aux computes de totaux de lire les données
+        // complètes initiales des lignes — tr._serverData — pour le repli
+        // hors-ligne des montants de taxes.)
         if (helpers) {
           for (const [key, fn] of fieldComputes) {
             const fieldName = key.split(":")[1];
             try {
-              const value = await fn(currentValues, helpers);
+              const value = await fn(currentValues, helpers, containerEl);
               writeFieldValue(containerEl, fieldName, fieldsInfo[fieldName], value);
             } catch (err) {
               console.warn(`Compute local ${key} échoué :`, err);
