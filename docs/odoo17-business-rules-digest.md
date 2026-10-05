@@ -438,3 +438,16 @@ Fichiers lus : `addons/web/static/src/model/relational_model/relational_model.js
   warn console, repli cache immédiat.
 - **favicon.ico 404** : `<link rel="icon">` ajouté dans index.html
   (assets/icon-192.png).
+
+#### Cas limites gérés par les backfills de lignes (taxes)
+- **Taux connu + record lisible** → calcul du moteur (HT / TTC / fixe,
+  multi-taxes en somme).
+- **Id de taxe déclaré mais record non en cache** (offline, jamais chargée)
+  → taxe inconnue : `price_tax` serveur **conservée** (jamais zéroée à
+  tort), ajoutée au total ; `price_total = sous-total + taxe conservée`.
+- **Colonne taxe vide** (ligne sans taxe) → `price_tax = 0`.
+- **Colonne taxe absente de la vue** → taxe inconnue : valeur serveur
+  conservée.
+- **Idempotence** : ligne dont les montants ne changent pas → renvoyée
+  telle quelle (aucun écrit DOM, aucune cascade, aucun refetch produit ni
+  tax record).

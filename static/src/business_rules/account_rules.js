@@ -286,32 +286,49 @@ onchangeRegistry.add("account.move:invoice_line_ids#product", async (lines, valu
     const discount = Number(updated.discount) || 0;
     const subtotal = Number((qty * price * (1 - discount / 100)).toFixed(2));
 
+    // taxes : tax_ids (m2m — paires [id, name]). Trois cas : id(s) connu(s)
+    // + record(s) lisible(s) → calcul ; id déclaré mais record non en cache
+    // (offline) → valeur serveur conservée ; pas de taxe / colonne absente
+    // → 0 ou valeur conservée.
     const hasTaxCol = "tax_ids" in line || "tax_ids" in updated;
-    if (hasTaxCol) {
-      // taxes : tax_ids (m2m — paires [id, name])
-      const taxIds = Array.isArray(updated.tax_ids)
-        ? updated.tax_ids.map((t) => (Array.isArray(t) ? t[0] : t)).filter(Boolean)
-        : [];
+    let taxAmount;
+    const num2 = (v) => (v === undefined || v === false || v === null ? 0 : Number(v) || 0);
+    const taxIds = hasTaxCol
+      ? (Array.isArray(updated.tax_ids)
+          ? updated.tax_ids.map((t) => (Array.isArray(t) ? t[0] : t)).filter(Boolean)
+          : [])
+      : [];
+    if (taxIds.length) {
       const taxRecords = [];
       for (const tid of taxIds) {
         const rec = await getTaxRecord(tid, helpers);
         if (rec) taxRecords.push(rec);
       }
-      const { tax_amount, included } = computeTaxAmounts(subtotal, qty, taxRecords);
-      updated.price_tax = tax_amount;
-      updated.price_total = Number((included ? subtotal : subtotal + tax_amount).toFixed(2));
+      if (taxRecords.length) {
+        const { tax_amount, included } = computeTaxAmounts(subtotal, qty, taxRecords);
+        taxAmount = tax_amount;
+        updated.price_tax = taxAmount;
+        updated.price_total = Number((included ? subtotal : subtotal + taxAmount).toFixed(2));
+      } else {
+        // taxe déclarée mais pas en cache (offline) → valeur serveur conservée
+        taxAmount = num2(line.price_tax);
+        updated.price_total = Number((subtotal + taxAmount).toFixed(2));
+      }
+    } else if (hasTaxCol) {
+      taxAmount = 0;
+      updated.price_tax = 0;
+      updated.price_total = subtotal;
     } else {
       // colonne taxe absente de la vue : valeur serveur conservée
-      const num2 = (v) => (v === undefined || v === false || v === null ? 0 : Number(v) || 0);
-      updated.price_total = Number((subtotal + num2(line.price_tax)).toFixed(2));
+      taxAmount = num2(line.price_tax);
+      updated.price_total = Number((subtotal + taxAmount).toFixed(2));
     }
     updated.price_subtotal = subtotal;
 
     // Idempotence : montants inchangés et rien à remplir → ligne telle quelle
-    const num2 = (v) => (v === undefined || v === false || v === null ? 0 : Number(v) || 0);
     const sameMoney = (a, b) => num2(a).toFixed(2) === num2(b).toFixed(2);
     const fillApplied = needsFill && !!product;
-    if (!fillApplied && sameMoney(subtotal, line.price_subtotal) && sameMoney(tax_amount, line.price_tax) && sameMoney(updated.price_total, line.price_total)) {
+    if (!fillApplied && sameMoney(subtotal, line.price_subtotal) && sameMoney(taxAmount, line.price_tax) && sameMoney(updated.price_total, line.price_total)) {
       filled.push(line);
       continue;
     }

@@ -251,23 +251,41 @@ onchangeRegistry.add("purchase.order:order_line#product", async (lines, values, 
     const discount = Number(updated.discount) || 0;
     const subtotal = Number((qty * price * (1 - discount / 100)).toFixed(2));
 
+    // taxes de la ligne : tax_ids (m2m — paires [id, name]) sinon taxes_id
+    // (m2o). Trois cas : id(s) connu(s) + record(s) lisible(s) → calcul ;
+    // id déclaré mais record non en cache (offline) → valeur serveur
+    // conservée ; pas de taxe / colonne absente → 0 ou valeur conservée.
     const hasTaxCol = "tax_ids" in line || "tax_ids" in updated || "taxes_id" in line || "taxes_id" in updated;
-    if (hasTaxCol) {
-      // taxes de la ligne : tax_ids (m2m — paires [id, name]) sinon taxes_id (m2o)
-      const taxIds = Array.isArray(updated.tax_ids)
-        ? updated.tax_ids.map((t) => (Array.isArray(t) ? t[0] : t)).filter(Boolean)
-        : (m2oId(updated.taxes_id) || m2oId(line.taxes_id) ? [m2oId(updated.taxes_id) || m2oId(line.taxes_id)] : []);
+    let taxAmount;
+    const taxIds = hasTaxCol
+      ? (Array.isArray(updated.tax_ids)
+          ? updated.tax_ids.map((t) => (Array.isArray(t) ? t[0] : t)).filter(Boolean)
+          : (m2oId(updated.taxes_id) || m2oId(line.taxes_id) ? [m2oId(updated.taxes_id) || m2oId(line.taxes_id)] : []))
+      : [];
+    if (taxIds.length) {
       const taxRecords = [];
       for (const tid of taxIds) {
         const rec = await getTaxRecord(tid, helpers);
         if (rec) taxRecords.push(rec);
       }
-      const { tax_amount, included } = computeTaxAmounts(subtotal, qty, taxRecords);
-      updated.price_tax = tax_amount;
-      updated.price_total = Number((included ? subtotal : subtotal + tax_amount).toFixed(2));
+      if (taxRecords.length) {
+        const { tax_amount, included } = computeTaxAmounts(subtotal, qty, taxRecords);
+        taxAmount = tax_amount;
+        updated.price_tax = taxAmount;
+        updated.price_total = Number((included ? subtotal : subtotal + taxAmount).toFixed(2));
+      } else {
+        // taxe déclarée mais pas en cache (offline) → valeur serveur conservée
+        taxAmount = num2(line.price_tax);
+        updated.price_total = Number((subtotal + taxAmount).toFixed(2));
+      }
+    } else if (hasTaxCol) {
+      taxAmount = 0;
+      updated.price_tax = 0;
+      updated.price_total = subtotal;
     } else {
       // colonne taxe absente de la vue : valeur serveur conservée
-      updated.price_total = Number((subtotal + num2(line.price_tax)).toFixed(2));
+      taxAmount = num2(line.price_tax);
+      updated.price_total = Number((subtotal + taxAmount).toFixed(2));
     }
     updated.price_subtotal = subtotal;
     if (updated.price_unit_discounted === undefined) {
@@ -277,7 +295,7 @@ onchangeRegistry.add("purchase.order:order_line#product", async (lines, values, 
     // Idempotence : montants inchangés et rien à remplir → ligne telle quelle
     const sameMoney = (a, b) => num2(a).toFixed(2) === num2(b).toFixed(2);
     const fillApplied = needsFill && !!product;
-    if (!fillApplied && sameMoney(subtotal, line.price_subtotal) && sameMoney(tax_amount, line.price_tax) && sameMoney(updated.price_total, line.price_total)) {
+    if (!fillApplied && sameMoney(subtotal, line.price_subtotal) && sameMoney(taxAmount, line.price_tax) && sameMoney(updated.price_total, line.price_total)) {
       filled.push(line);
       continue;
     }

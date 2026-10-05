@@ -412,18 +412,34 @@ onchangeRegistry.add("sale.order:order_line#product", async (lines, values, help
     const subtotal = Number((qty * price * (1 - discount / 100)).toFixed(2));
 
     // taxe de la ligne : tax_id (m2o unique — id entier ou {id, display_name}).
-    // Si la colonne taxe n'est PAS dans la vue, la taxe est inconnue : on ne
-    // touche pas price_tax (valeur serveur conservée), on l'additionne au
-    // total comme approximation.
-    if ("tax_id" in line || "tax_id" in updated) {
-      const taxId = m2oId(updated.tax_id) || m2oId(line.tax_id);
-      const taxRec = taxId ? await getTaxRecord(taxId, helpers) : null;
-      const { tax_amount, included } = computeTaxAmounts(subtotal, qty, taxRec ? [taxRec] : []);
-      updated.price_tax = tax_amount;
-      // prix TTC (price_include) : le total reste le sous-total (comme Odoo)
-      updated.price_total = Number((included ? subtotal : subtotal + tax_amount).toFixed(2));
+    // Trois cas :
+    //  - id de taxe connu + record lisible → calcul du moteur approximatif
+    //    (prix TTC : le total reste le sous-total, comme Odoo) ;
+    //  - id de taxe déclaré mais record non en cache (offline) → INCONNUE :
+    //    price_tax serveur conservée, ajoutée au total ;
+    //  - pas de taxe (colonne vide ou absente de la vue) → valeur existante
+    //    conservée si la colonne est absente (taxe inconnue), sinon 0.
+    let taxAmount;
+    const hasTaxCol = "tax_id" in line || "tax_id" in updated;
+    const taxId = hasTaxCol ? (m2oId(updated.tax_id) || m2oId(line.tax_id)) : false;
+    if (taxId) {
+      const taxRec = await getTaxRecord(taxId, helpers);
+      if (taxRec) {
+        const { tax_amount, included } = computeTaxAmounts(subtotal, qty, [taxRec]);
+        taxAmount = tax_amount;
+        updated.price_tax = taxAmount;
+        updated.price_total = Number((included ? subtotal : subtotal + taxAmount).toFixed(2));
+      } else {
+        taxAmount = num(line.price_tax);
+        updated.price_total = Number((subtotal + taxAmount).toFixed(2));
+      }
+    } else if (hasTaxCol) {
+      taxAmount = 0;
+      updated.price_tax = 0;
+      updated.price_total = subtotal;
     } else {
-      updated.price_total = Number((subtotal + num(line.price_tax)).toFixed(2));
+      taxAmount = num(line.price_tax);
+      updated.price_total = Number((subtotal + taxAmount).toFixed(2));
     }
     updated.price_subtotal = subtotal;
 
@@ -431,7 +447,7 @@ onchangeRegistry.add("sale.order:order_line#product", async (lines, values, help
     // remplir, on renvoie la ligne telle quelle (aucun écrit DOM, aucune
     // cascade, aucun refetch de produit).
     const fillApplied = needsFill && !!product;
-    if (!fillApplied && sameMoney(subtotal, line.price_subtotal) && sameMoney(tax_amount, line.price_tax) && sameMoney(updated.price_total, line.price_total)) {
+    if (!fillApplied && sameMoney(subtotal, line.price_subtotal) && sameMoney(taxAmount, line.price_tax) && sameMoney(updated.price_total, line.price_total)) {
       filled.push(line);
       continue;
     }
