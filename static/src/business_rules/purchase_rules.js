@@ -23,7 +23,7 @@ import {
   constraintsRegistry,
   fieldComputeRegistry,
 } from "../model/relational_model/business_rules_registry.js";
-import { asM2o, m2oId, displayOf, isMissingRecord, fposForPartner, partnerWarning, sumLineField, defaultLineSubtotal } from "./rules_helpers.js";
+import { asM2o, m2oId, displayOf, isMissingRecord, fposForPartner, partnerWarning, sumLineField, defaultLineTotal, getTaxRecord, computeTaxAmounts } from "./rules_helpers.js";
 
 /* ================================================================== */
 /* purchase.order — onchange partner_id (méthode source Odoo 17)       */
@@ -131,11 +131,12 @@ fieldComputeRegistry.add("purchase.order:date_planned", (values) => {
   return dates.length ? dates.sort()[0] : undefined;
 });
 
-// _compute_amounts (même convention que ventes : pas de tax engine)
-fieldComputeRegistry.add("purchase.order:amount_untaxed", (values) => sumLineField(values.order_line, "price_subtotal", defaultLineSubtotal));
+// _compute_amounts (même convention que ventes : total = Σ price_total,
+// tax = Σ price_tax, untaxed = total − tax)
+fieldComputeRegistry.add("purchase.order:amount_total", (values) => sumLineField(values.order_line, "price_total", defaultLineTotal));
 fieldComputeRegistry.add("purchase.order:amount_tax", (values) => sumLineField(values.order_line, "price_tax"));
-fieldComputeRegistry.add("purchase.order:amount_total", (values) =>
-  sumLineField(values.order_line, "price_subtotal", defaultLineSubtotal) + sumLineField(values.order_line, "price_tax")
+fieldComputeRegistry.add("purchase.order:amount_untaxed", (values) =>
+  Number((sumLineField(values.order_line, "price_total", defaultLineTotal) - sumLineField(values.order_line, "price_tax")).toFixed(2))
 );
 
 /* ================================================================== */
@@ -177,6 +178,7 @@ onchangeRegistry.add("purchase.order:order_line#product", async (lines, values, 
   // la ligne « incomplète » (boucle de refetch sinon).
   const isEmptyCell = (v) =>
     Array.isArray(v) ? v.length === 0 : v === undefined || v === false || v === null || v === "";
+  const num2 = (v) => (v === undefined || v === false || v === null ? 0 : Number(v) || 0);
 
   const filled = [];
   for (let i = 0; i < lines.length; i++) {
@@ -191,68 +193,94 @@ onchangeRegistry.add("purchase.order:order_line#product", async (lines, values, 
       ("product_uom" in line && isEmptyCell(line.product_uom)) ||
       ("tax_ids" in line && isEmptyCell(line.tax_ids)) ||
       ("taxes_id" in line && isEmptyCell(line.taxes_id));
-    if (!needsFill) { filled.push(line); continue; }
 
     let product = null;
-    try {
-      product = await helpers.getRecordSmart("product.product", pid, helpers.apiKey, helpers.baseUrl);
-    } catch (err) {
-      filled.push(line);
-      continue;
+    if (needsFill) {
+      try {
+        product = await helpers.getRecordSmart("product.product", pid, helpers.apiKey, helpers.baseUrl);
+      } catch (err) {
+        product = null;
+      }
+      if (isMissingRecord(product)) { filled.push(line); continue; }
     }
-    if (isMissingRecord(product)) { filled.push(line); continue; }
 
     const updated = { ...line };
-    if (!updated.name) updated.name = product.description_purchase || product.name || "";
+    if (needsFill && product) {
+      if (!updated.name) updated.name = product.description_purchase || product.name || "";
 
-    // _product_id_change : product_uom = product.uom_po_id or product.uom_id
-    const uom = asM2o(product.uom_po_id) || asM2o(product.uom_id);
-    if (uom && uom.id && !line.product_uom) {
-      if (!refsUom) refsUom = await helpers.getReferenceRecordsSmart("product.uom", helpers.apiKey, helpers.baseUrl);
-      updated.product_uom = { id: uom.id, display_name: displayOf(refsUom, uom.id) || uom.display_name };
-    }
+      // _product_id_change : product_uom = product.uom_po_id or product.uom_id
+      const uom = asM2o(product.uom_po_id) || asM2o(product.uom_id);
+      if (uom && uom.id && !line.product_uom) {
+        if (!refsUom) refsUom = await helpers.getReferenceRecordsSmart("product.uom", helpers.apiKey, helpers.baseUrl);
+        updated.product_uom = { id: uom.id, display_name: displayOf(refsUom, uom.id) || uom.display_name };
+      }
 
-    // taxes : supplier_taxes_id (repli taxes_id du produit)
-    const taxes = Array.isArray(product.supplier_taxes_id) && product.supplier_taxes_id.length
-      ? product.supplier_taxes_id
-      : product.taxes_id;
-    if (taxes && taxes.length) {
-      const normalized = taxes.map((t) => (Array.isArray(t) ? t : [t, t]));
-      // tax_ids = MANY2MANY (widget tags) → tableau de paires
-      if ("tax_ids" in updated && isEmptyCell(line.tax_ids)) updated.tax_ids = normalized;
-      // taxes_id = MANY2ONE UNIQUE en Odoo 17 → première taxe uniquement
-      if ("taxes_id" in updated && isEmptyCell(line.taxes_id)) {
-        const first = normalized[0];
-        updated.taxes_id = { id: first[0], display_name: first[1] ?? String(first[0]) };
+      // taxes : supplier_taxes_id (repli taxes_id du produit)
+      const taxes = Array.isArray(product.supplier_taxes_id) && product.supplier_taxes_id.length
+        ? product.supplier_taxes_id
+        : product.taxes_id;
+      if (taxes && taxes.length) {
+        const normalized = taxes.map((t) => (Array.isArray(t) ? t : [t, t]));
+        // tax_ids = MANY2MANY (widget tags) → tableau de paires
+        if ("tax_ids" in updated && isEmptyCell(line.tax_ids)) updated.tax_ids = normalized;
+        // taxes_id = MANY2ONE UNIQUE en Odoo 17 → première taxe uniquement
+        if ("taxes_id" in updated && isEmptyCell(line.taxes_id)) {
+          const first = normalized[0];
+          updated.taxes_id = { id: first[0], display_name: first[1] ?? String(first[0]) };
+        }
+      }
+
+      // prix : pas de seller_ids offline → standard_price
+      if ("price_unit" in updated && isEmptyCell(line.price_unit)) {
+        updated.price_unit = Number(product.standard_price) || 0;
+      }
+
+      // date_planned = date_order + délai (seller.delay côté serveur,
+      // repli product.delay)
+      if (!line.date_planned && orderDate) {
+        const delay = Number(product.delay) || 0;
+        const d = new Date(orderDate + "T00:00:00");
+        d.setDate(d.getDate() + delay);
+        updated.date_planned = d.toISOString().slice(0, 10);
       }
     }
 
-    // prix : pas de seller_ids offline → standard_price
-    if ("price_unit" in updated && isEmptyCell(line.price_unit)) {
-      updated.price_unit = Number(product.standard_price) || 0;
-    }
-
-    // date_planned = date_order + délai (seller.delay côté serveur,
-    // repli product.delay)
-    if (!line.date_planned && orderDate) {
-      const delay = Number(product.delay) || 0;
-      const d = new Date(orderDate + "T00:00:00");
-      d.setDate(d.getDate() + delay);
-      updated.date_planned = d.toISOString().slice(0, 10);
-    }
-
-    // _compute_amount (approximation sans tax engine)
+    // ---- _compute_amount + taxes (toujours recalculé, idempotent) ----
     const qty = Number(updated.product_qty) || Number(updated.product_uom_qty) || 0;
     const price = Number(updated.price_unit) || 0;
     const discount = Number(updated.discount) || 0;
     const subtotal = Number((qty * price * (1 - discount / 100)).toFixed(2));
+
+    const hasTaxCol = "tax_ids" in line || "tax_ids" in updated || "taxes_id" in line || "taxes_id" in updated;
+    if (hasTaxCol) {
+      // taxes de la ligne : tax_ids (m2m — paires [id, name]) sinon taxes_id (m2o)
+      const taxIds = Array.isArray(updated.tax_ids)
+        ? updated.tax_ids.map((t) => (Array.isArray(t) ? t[0] : t)).filter(Boolean)
+        : (m2oId(updated.taxes_id) || m2oId(line.taxes_id) ? [m2oId(updated.taxes_id) || m2oId(line.taxes_id)] : []);
+      const taxRecords = [];
+      for (const tid of taxIds) {
+        const rec = await getTaxRecord(tid, helpers);
+        if (rec) taxRecords.push(rec);
+      }
+      const { tax_amount, included } = computeTaxAmounts(subtotal, qty, taxRecords);
+      updated.price_tax = tax_amount;
+      updated.price_total = Number((included ? subtotal : subtotal + tax_amount).toFixed(2));
+    } else {
+      // colonne taxe absente de la vue : valeur serveur conservée
+      updated.price_total = Number((subtotal + num2(line.price_tax)).toFixed(2));
+    }
     updated.price_subtotal = subtotal;
-    if (updated.price_tax === undefined || updated.price_tax === false) updated.price_tax = 0;
-    updated.price_total = Number((subtotal + (Number(updated.price_tax) || 0)).toFixed(2));
     if (updated.price_unit_discounted === undefined) {
       updated.price_unit_discounted = Number((price * (1 - discount / 100)).toFixed(2));
     }
 
+    // Idempotence : montants inchangés et rien à remplir → ligne telle quelle
+    const sameMoney = (a, b) => num2(a).toFixed(2) === num2(b).toFixed(2);
+    const fillApplied = needsFill && !!product;
+    if (!fillApplied && sameMoney(subtotal, line.price_subtotal) && sameMoney(tax_amount, line.price_tax) && sameMoney(updated.price_total, line.price_total)) {
+      filled.push(line);
+      continue;
+    }
     changed = true;
     filled.push(updated);
   }

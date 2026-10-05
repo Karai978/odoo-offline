@@ -44,7 +44,10 @@ export function m2oId(value) {
   return value;
 }
 
-/** Libellé d'un id dans une table de référence (name_service), "" si absent. */
+import { getCachedRecord, fetchAndStoreRecord } from "../core/record_cache.js";
+
+/**
+ * Libellé d'un id dans une table de référence (name_service), "" si absent. */
 export function displayOf(refs, id) {
   if (id === false || id === null || id === undefined) return "";
   const found = (refs || []).find((r) => String(r.id) === String(id));
@@ -193,4 +196,92 @@ export function sumLineField(lines, field, fallback) {
 /** Date ISO du jour (yyyy-mm-dd), dans le fuseau local du poste. */
 export function todayISO() {
   return new Date().toISOString().slice(0, 10);
+}
+
+/* ------------------------------------------------------------------ */
+/* Moteur de taxes approximatif (offline)                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Récupère un enregistrement account.tax : CACHE D'ABORD (zéro réseau),
+ * puis un fetch unique en ligne (qui met le record en cache pour la
+ * suite — pas de spam type product.uom). Null si introuvable.
+ */
+export async function getTaxRecord(taxId, helpers) {
+  const id = m2oId(taxId);
+  if (!id) return null;
+  try {
+    const cached = await getCachedRecord("account.tax", id);
+    if (cached) return cached;
+  } catch (err) {
+    /* cache illisible — on tente le réseau */
+  }
+  if (navigator.onLine) {
+    try {
+      return await fetchAndStoreRecord("account.tax", id, helpers.apiKey, helpers.baseUrl);
+    } catch (err) {
+      return null; // pas en cache, hors-ligne ou backend indisponible
+    }
+  }
+  return null;
+}
+
+/**
+ * Moteur de taxes APPROXIMATIF — mirroir simplifié de
+ * account.tax._compute_tax (Odoo 17) :
+ *  - `percent` (taux en % sur la base HT) : base × taux / 100 ;
+ *  - `ad_dosem` (montant fixe par unité) : quantité × montant ;
+ *  - `price_include` (prix TTC) : base HT ≈ base / (1 + taux/100),
+ *    taxe = base − base HT (approximation du reverse_compute ;
+ *    l'interaction multi-taxes incluses d'Odoo n'est pas répliquée).
+ *
+ * NON répliqué (documenté) : groupes de taxes, arrondis fiscaux par
+ * taxe (base_round/tax_round), répartition de base, map_tax de la
+ * position fiscale. L'arrondi final est à 2 décimales.
+ *
+ * @param {number} base - base brute (qty × prix × (1 − remise/100))
+ * @param {number} quantity
+ * @param {object[]} taxRecords - records account.tax
+ * @returns {{ tax_amount: number, included: boolean }}
+ */
+export function computeTaxAmounts(base, quantity, taxRecords) {
+  let taxAmount = 0;
+  let included = false;
+  for (const tax of taxRecords || []) {
+    if (!tax) continue;
+    const amount = Number(tax.amount) || 0;
+    if (tax.price_include) included = true;
+    if (tax.amount_type === "ad_dosem") {
+      // montant fixe par unité
+      const fixedTotal = (Number(quantity) || 0) * amount;
+      taxAmount += tax.price_include ? Math.min(fixedTotal, base) : fixedTotal;
+    } else {
+      // percent (défaut)
+      if (tax.price_include) {
+        const denom = 1 + amount / 100;
+        const ht = denom > 0 ? base / denom : 0;
+        taxAmount += base - ht;
+      } else {
+        taxAmount += (base * amount) / 100;
+      }
+    }
+  }
+  return { tax_amount: Number(taxAmount.toFixed(2)), included };
+}
+
+/**
+ * Total TTC d'une ligne : price_total s'il est collecté (valeur serveur
+ * ou écrite par les règles), sinon sous-total + taxe (hypothèse : taxes
+ * hors prix — c'est le cas courant).
+ */
+export function defaultLineTotal(line) {
+  if (!line) return 0;
+  const subtotal =
+    line.price_subtotal !== undefined && line.price_subtotal !== false && line.price_subtotal !== ""
+      ? parseFloat(line.price_subtotal)
+      : defaultLineSubtotal(line);
+  const tax = parseFloat(line.price_tax);
+  return Number(
+    ((isNaN(subtotal) ? 0 : subtotal) + (isNaN(tax) ? 0 : tax)).toFixed(2)
+  );
 }

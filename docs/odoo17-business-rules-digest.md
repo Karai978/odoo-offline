@@ -291,11 +291,13 @@ Règles attendues (pattern standard 17) : `onchange product_id` → `product_uom
   Toutes les règles passent par `isMissingRecord()` (rules_helpers.js) avant
   d'utiliser un record : sinon une règle écraserait des champs (prix → 0,
   pricelist/termes → false, signature → false) sur un cache manquant.
-- **Backfill de lignes** (onchange produit) : ne remplit que les champs dérivés
-  **vides** (name, product_uom, tax(es)_id, price_unit, price_subtotal,
-  price_tax, price_total, date_planned achat) ; une ligne déjà complète (ou un
-  prix saisi à la main) est intouchée — idempotent, le serveur reste la vérité
-  au sync.
+- **Backfill de lignes** (onchange produit) : remplit les champs dérivés
+  **vides** (name, product_uom, tax(es)_id, price_unit, date_planned achat)
+  et **recalcule en permanence** les montants (price_subtotal, price_tax,
+  price_total) + les taxes via le moteur approximatif ci-dessous ; une ligne
+  dont les valeurs ne changent pas est renvoyée telle quelle (aucun écrit
+  DOM, aucune cascade, aucun refetch) — idempotent, le serveur reste la
+  vérité au sync.
 - **m2o collecté = id entier ou "tmp:…"** : les règles ignorent les ids tmp
   (création locale non synchronisée).
 - **Adresses** (partner_invoice/shipping) : repli sur le partner lui-même
@@ -306,8 +308,25 @@ Règles attendues (pattern standard 17) : `onchange product_id` → `product_uom
   disponibles offline : les warnings `*_warn` sont appliqués sans condition de
   groupe (documenté).
 
+### Moteur de taxes approximatif (offline) — `rules_helpers.js`
+Ajout : `computeTaxAmounts(base, quantity, taxRecords)` + `getTaxRecord()`
+(lecture `account.tax` **cache-first**, un seul fetch en ligne ensuite).
+Les backfills de lignes (vente/achat/facture) recalculent à chaque événement
+(sous-total, `price_tax`, `price_total`), idempotent :
+- `percent` (défaut) : `base × taux / 100` ;
+- `ad_dosem` (montant fixe par unité) : `quantity × montant` ;
+- `price_include` (prix TTC) : `base HT ≈ base / (1 + taux/100)`,
+  `price_total = price_subtotal` (comme Odoo, le total n'additionne pas la
+  taxe incluse).
+Totaux document recalculés en conséquence :
+`amount_total = Σ price_total`, `amount_tax = Σ price_tax`,
+`amount_untaxed = amount_total − amount_tax` (juste aussi en prix TTC).
+
 ### Ce qui n'est PAS répliqué offline (documenté)
-- Tax engine (tous les `price_tax` recalculés = 0 ; conservés sinon).
+- Tax engine complet : groupes de taxes, arrondis fiscaux par taxe
+  (`base_round`/`tax_round`), répartition de base, `map_tax` de la position
+  fiscale ; l'interaction multi-taxes incluses est approximée ; arrondi final
+  à 2 décimales.
 - Pricelists / seller_ids (prix = list_price / standard_price).
 - Taux de change (currency_rate non touché).
 - `stock.move` : propagation des locations/quantités aux moves (scope picking

@@ -28,7 +28,7 @@ import {
   constraintsRegistry,
   fieldComputeRegistry,
 } from "../model/relational_model/business_rules_registry.js";
-import { asM2o, m2oId, displayOf, isMissingRecord, fposForPartner, partnerWarning, sumLineField, defaultLineSubtotal, todayISO } from "./rules_helpers.js";
+import { asM2o, m2oId, displayOf, isMissingRecord, fposForPartner, partnerWarning, sumLineField, defaultLineTotal, getTaxRecord, computeTaxAmounts, todayISO } from "./rules_helpers.js";
 
 /* ================================================================== */
 /* Helpers internes au domaine Ventes                                  */
@@ -229,13 +229,15 @@ onchangeRegistry.add("sale.order:partner_id#partner_warn", async (partnerId, val
 /* sale.order — computes de champ (offline_field_compute)              */
 /* ================================================================== */
 
-// _compute_amounts : somme des lignes (pas de tax engine offline —
-// convention : price_tax conservé des lignes existantes, 0 sinon).
+// _compute_amounts : somme des lignes.
+// total = Σ price_total ; tax = Σ price_tax ; untaxed = total − tax
+// (formulation qui reste juste avec des taxes « prix TTC » price_include,
+// où le total d'une ligne = son sous-total).
 const SALE_LINES = "order_line";
-fieldComputeRegistry.add("sale.order:amount_untaxed", (values) => sumLineField(values[SALE_LINES], "price_subtotal", defaultLineSubtotal));
+fieldComputeRegistry.add("sale.order:amount_total", (values) => sumLineField(values[SALE_LINES], "price_total", defaultLineTotal));
 fieldComputeRegistry.add("sale.order:amount_tax", (values) => sumLineField(values[SALE_LINES], "price_tax"));
-fieldComputeRegistry.add("sale.order:amount_total", (values) =>
-  sumLineField(values[SALE_LINES], "price_subtotal", defaultLineSubtotal) + sumLineField(values[SALE_LINES], "price_tax")
+fieldComputeRegistry.add("sale.order:amount_untaxed", (values) =>
+  Number((sumLineField(values[SALE_LINES], "price_total", defaultLineTotal) - sumLineField(values[SALE_LINES], "price_tax")).toFixed(2))
 );
 
 // _compute_is_expired : draft/sent et validity_date < aujourd'hui
@@ -353,6 +355,8 @@ onchangeRegistry.add("sale.order:order_line#product", async (lines, values, help
   // la ligne « incomplète » : sinon la règle resterait active à chaque
   // événement et refetcherait les produits en boucle.
   const isEmpty = (v) => v === undefined || v === false || v === null || v === "";
+  const num = (v) => (v === undefined || v === false || v === null ? 0 : Number(v) || 0);
+  const sameMoney = (a, b) => num(a).toFixed(2) === num(b).toFixed(2);
 
   for (const line of lines) {
     if (!line) { filled.push(line); continue; }
@@ -364,50 +368,73 @@ onchangeRegistry.add("sale.order:order_line#product", async (lines, values, help
       ("price_unit" in line && isEmpty(line.price_unit)) ||
       ("product_uom" in line && isEmpty(line.product_uom)) ||
       ("tax_id" in line && isEmpty(line.tax_id));
-    if (!needsFill) { filled.push(line); continue; }
 
     let product = null;
-    try {
-      product = await helpers.getRecordSmart("product.product", pid, helpers.apiKey, helpers.baseUrl);
-    } catch (err) {
+    if (needsFill) {
+      try {
+        product = await helpers.getRecordSmart("product.product", pid, helpers.apiKey, helpers.baseUrl);
+      } catch (err) {
+        product = null;
+      }
+      if (isMissingRecord(product)) { filled.push(line); continue; }
+    }
+
+    const updated = { ...line };
+    if (needsFill && product) {
+      if (!updated.name) updated.name = product.description_sale || product.name || "";
+
+      const uom = asM2o(product.uom_id);
+      if (uom && uom.id && !line.product_uom) {
+        if (!refsUom) refsUom = await helpers.getReferenceRecordsSmart("product.uom", helpers.apiKey, helpers.baseUrl);
+        updated.product_uom = { id: uom.id, display_name: displayOf(refsUom, uom.id) || uom.display_name };
+      }
+
+      // tax_id est un MANY2ONE UNIQUE sur sale.order.line en Odoo 17
+      // (taxes_id m2m = les taxes additionnelles) → on écrit la première
+      // taxe du produit, comme le fait _compute_tax_id côté serveur.
+      if ("tax_id" in updated && isEmpty(line.tax_id) && Array.isArray(product.taxes_id) && product.taxes_id.length) {
+        const first = product.taxes_id[0];
+        updated.tax_id = Array.isArray(first)
+          ? { id: first[0], display_name: first[1] ?? String(first[0]) }
+          : { id: first, display_name: "" };
+      }
+
+      if ("price_unit" in updated && isEmpty(line.price_unit)) {
+        // pas de pricelist offline → repli list_price
+        updated.price_unit = Number(product.list_price) || 0;
+      }
+    }
+
+    // ---- _compute_amount + taxes (toujours recalculé, idempotent) ----
+    const qty = num(updated.product_uom_qty);
+    const price = num(updated.price_unit);
+    const discount = num(updated.discount);
+    const subtotal = Number((qty * price * (1 - discount / 100)).toFixed(2));
+
+    // taxe de la ligne : tax_id (m2o unique — id entier ou {id, display_name}).
+    // Si la colonne taxe n'est PAS dans la vue, la taxe est inconnue : on ne
+    // touche pas price_tax (valeur serveur conservée), on l'additionne au
+    // total comme approximation.
+    if ("tax_id" in line || "tax_id" in updated) {
+      const taxId = m2oId(updated.tax_id) || m2oId(line.tax_id);
+      const taxRec = taxId ? await getTaxRecord(taxId, helpers) : null;
+      const { tax_amount, included } = computeTaxAmounts(subtotal, qty, taxRec ? [taxRec] : []);
+      updated.price_tax = tax_amount;
+      // prix TTC (price_include) : le total reste le sous-total (comme Odoo)
+      updated.price_total = Number((included ? subtotal : subtotal + tax_amount).toFixed(2));
+    } else {
+      updated.price_total = Number((subtotal + num(line.price_tax)).toFixed(2));
+    }
+    updated.price_subtotal = subtotal;
+
+    // Idempotence : si les montants ne changent pas et qu'il n'y a rien à
+    // remplir, on renvoie la ligne telle quelle (aucun écrit DOM, aucune
+    // cascade, aucun refetch de produit).
+    const fillApplied = needsFill && !!product;
+    if (!fillApplied && sameMoney(subtotal, line.price_subtotal) && sameMoney(tax_amount, line.price_tax) && sameMoney(updated.price_total, line.price_total)) {
       filled.push(line);
       continue;
     }
-    if (isMissingRecord(product)) { filled.push(line); continue; }
-
-    const updated = { ...line };
-    if (!updated.name) updated.name = product.description_sale || product.name || "";
-
-    const uom = asM2o(product.uom_id);
-    if (uom && uom.id && !line.product_uom) {
-      if (!refsUom) refsUom = await helpers.getReferenceRecordsSmart("product.uom", helpers.apiKey, helpers.baseUrl);
-      updated.product_uom = { id: uom.id, display_name: displayOf(refsUom, uom.id) || uom.display_name };
-    }
-
-    // tax_id est un MANY2ONE UNIQUE sur sale.order.line en Odoo 17
-    // (taxes_id m2m = les taxes additionnelles) → on écrit la première
-    // taxe du produit, comme le fait _compute_tax_id côté serveur.
-    if ("tax_id" in updated && isEmpty(line.tax_id) && Array.isArray(product.taxes_id) && product.taxes_id.length) {
-      const first = product.taxes_id[0];
-      updated.tax_id = Array.isArray(first)
-        ? { id: first[0], display_name: first[1] ?? String(first[0]) }
-        : { id: first, display_name: "" };
-    }
-
-    if ("price_unit" in updated && isEmpty(line.price_unit)) {
-      // pas de pricelist offline → repli list_price
-      updated.price_unit = Number(product.list_price) || 0;
-    }
-
-    // _compute_amount (approximation sans tax engine)
-    const qty = Number(updated.product_uom_qty) || 0;
-    const price = Number(updated.price_unit) || 0;
-    const discount = Number(updated.discount) || 0;
-    const subtotal = Number((qty * price * (1 - discount / 100)).toFixed(2));
-    updated.price_subtotal = subtotal;
-    if (updated.price_tax === undefined || updated.price_tax === false) updated.price_tax = 0;
-    updated.price_total = Number((subtotal + (Number(updated.price_tax) || 0)).toFixed(2));
-
     changed = true;
     filled.push(updated);
   }

@@ -23,7 +23,7 @@ import {
   onchangeRegistry,
   fieldComputeRegistry,
 } from "../model/relational_model/business_rules_registry.js";
-import { asM2o, m2oId, displayOf, isMissingRecord, fposForPartner, partnerWarning, sumLineField, defaultLineSubtotal } from "./rules_helpers.js";
+import { asM2o, m2oId, displayOf, isMissingRecord, fposForPartner, partnerWarning, sumLineField, defaultLineTotal, getTaxRecord, computeTaxAmounts } from "./rules_helpers.js";
 
 const SALE_TYPES = ["out_invoice", "out_refund"];
 const PURCHASE_TYPES = ["in_invoice", "in_refund", "in_receipt"];
@@ -198,12 +198,13 @@ onchangeRegistry.add("account.move:journal_id#currency", async (journalId, value
 /* account.move — compute des montants                                 */
 /* ================================================================== */
 
-// _compute_amount (approximation : somme des lignes produit/frais,
-// pas de tax engine offline).
-fieldComputeRegistry.add("account.move:amount_untaxed", (values) => sumLineField(values.invoice_line_ids, "price_subtotal", defaultLineSubtotal));
+// _compute_amount (somme des lignes : total = Σ price_total,
+// tax = Σ price_tax, untaxed = total − tax — exact aussi pour les
+// prix TTC, cf. moteur de taxes approximatif de rules_helpers.js).
+fieldComputeRegistry.add("account.move:amount_total", (values) => sumLineField(values.invoice_line_ids, "price_total", defaultLineTotal));
 fieldComputeRegistry.add("account.move:amount_tax", (values) => sumLineField(values.invoice_line_ids, "price_tax"));
-fieldComputeRegistry.add("account.move:amount_total", (values) =>
-  sumLineField(values.invoice_line_ids, "price_subtotal", defaultLineSubtotal) + sumLineField(values.invoice_line_ids, "price_tax")
+fieldComputeRegistry.add("account.move:amount_untaxed", (values) =>
+  Number((sumLineField(values.invoice_line_ids, "price_total", defaultLineTotal) - sumLineField(values.invoice_line_ids, "price_tax")).toFixed(2))
 );
 
 // _compute_direction_sign : 1 outbound / -1 inbound
@@ -224,7 +225,6 @@ onchangeRegistry.add("account.move:invoice_line_ids#product", async (lines, valu
 
   const moveType = values.move_type;
   const isSale = SALE_TYPES.includes(moveType);
-  let refsUom = null;
   let changed = false;
 
   // Vide = undefined/false/null/"" ou tableau vide (un prix volontairement
@@ -243,50 +243,78 @@ onchangeRegistry.add("account.move:invoice_line_ids#product", async (lines, valu
       ("name" in line && isEmptyCell(line.name)) ||
       ("price_unit" in line && isEmptyCell(line.price_unit)) ||
       ("tax_ids" in line && isEmptyCell(line.tax_ids));
-    if (!needsFill) { filled.push(line); continue; }
 
     let product = null;
-    try {
-      product = await helpers.getRecordSmart("product.product", pid, helpers.apiKey, helpers.baseUrl);
-    } catch (err) {
-      filled.push(line);
-      continue;
+    if (needsFill) {
+      try {
+        product = await helpers.getRecordSmart("product.product", pid, helpers.apiKey, helpers.baseUrl);
+      } catch (err) {
+        product = null;
+      }
+      if (isMissingRecord(product)) { filled.push(line); continue; }
     }
-    if (isMissingRecord(product)) { filled.push(line); continue; }
 
     const updated = { ...line };
+    if (needsFill && product) {
+      // _compute_name : partner_ref + description_sale (journal vente)
+      // / description_purchase (journal achat)
+      const parts = [];
+      if (product.partner_ref) parts.push(product.partner_ref);
+      const desc = isSale ? product.description_sale : product.description_purchase;
+      if (desc) parts.push(desc);
+      if (!updated.name && parts.length) updated.name = parts.join("\n");
+      else if (!updated.name) updated.name = product.name || "";
 
-    // _compute_name : partner_ref + description_sale (journal vente)
-    // / description_purchase (journal achat)
-    const parts = [];
-    if (product.partner_ref) parts.push(product.partner_ref);
-    const desc = isSale ? product.description_sale : product.description_purchase;
-    if (desc) parts.push(desc);
-    if (!updated.name && parts.length) updated.name = parts.join("\n");
-    else if (!updated.name) updated.name = product.name || "";
+      // taxes : taxes_id du produit (le filtre par pays du partner —
+      // _compute_tax_ids — est un calcul serveur ; approximation : taxes
+      // brutes du produit, documenté). tax_ids = many2many (tags).
+      const taxes = Array.isArray(product.taxes_id) ? product.taxes_id : [];
+      if (taxes.length && "tax_ids" in updated && isEmptyCell(line.tax_ids)) {
+        updated.tax_ids = taxes.map((t) => (Array.isArray(t) ? t : [t, t]));
+      }
 
-    // taxes : taxes_id du produit (le filtre par pays du partner —
-    // _compute_tax_ids — est un calcul serveur ; approximation : taxes
-    // brutes du produit, documenté). tax_ids = many2many (tags).
-    const taxes = Array.isArray(product.taxes_id) ? product.taxes_id : [];
-    if (taxes.length && "tax_ids" in updated && isEmptyCell(line.tax_ids)) {
-      updated.tax_ids = taxes.map((t) => (Array.isArray(t) ? t : [t, t]));
+      // prix : list_price (vente) / standard_price (achat)
+      if ("price_unit" in updated && isEmptyCell(line.price_unit)) {
+        updated.price_unit = Number(isSale ? product.list_price : product.standard_price) || 0;
+      }
     }
 
-    // prix : list_price (vente) / standard_price (achat)
-    if ("price_unit" in updated && isEmptyCell(line.price_unit)) {
-      updated.price_unit = Number(isSale ? product.list_price : product.standard_price) || 0;
-    }
-
-    // _compute_price_subtotal / _compute_price_total (sans tax engine)
+    // ---- _compute_price_subtotal / _compute_price_total + taxes ----
+    // (toujours recalculé, idempotent)
     const qty = Number(updated.quantity) || Number(updated.product_uom_qty) || 0;
     const price = Number(updated.price_unit) || 0;
     const discount = Number(updated.discount) || 0;
     const subtotal = Number((qty * price * (1 - discount / 100)).toFixed(2));
-    updated.price_subtotal = subtotal;
-    if (updated.price_tax === undefined || updated.price_tax === false) updated.price_tax = 0;
-    updated.price_total = Number((subtotal + (Number(updated.price_tax) || 0)).toFixed(2));
 
+    const hasTaxCol = "tax_ids" in line || "tax_ids" in updated;
+    if (hasTaxCol) {
+      // taxes : tax_ids (m2m — paires [id, name])
+      const taxIds = Array.isArray(updated.tax_ids)
+        ? updated.tax_ids.map((t) => (Array.isArray(t) ? t[0] : t)).filter(Boolean)
+        : [];
+      const taxRecords = [];
+      for (const tid of taxIds) {
+        const rec = await getTaxRecord(tid, helpers);
+        if (rec) taxRecords.push(rec);
+      }
+      const { tax_amount, included } = computeTaxAmounts(subtotal, qty, taxRecords);
+      updated.price_tax = tax_amount;
+      updated.price_total = Number((included ? subtotal : subtotal + tax_amount).toFixed(2));
+    } else {
+      // colonne taxe absente de la vue : valeur serveur conservée
+      const num2 = (v) => (v === undefined || v === false || v === null ? 0 : Number(v) || 0);
+      updated.price_total = Number((subtotal + num2(line.price_tax)).toFixed(2));
+    }
+    updated.price_subtotal = subtotal;
+
+    // Idempotence : montants inchangés et rien à remplir → ligne telle quelle
+    const num2 = (v) => (v === undefined || v === false || v === null ? 0 : Number(v) || 0);
+    const sameMoney = (a, b) => num2(a).toFixed(2) === num2(b).toFixed(2);
+    const fillApplied = needsFill && !!product;
+    if (!fillApplied && sameMoney(subtotal, line.price_subtotal) && sameMoney(tax_amount, line.price_tax) && sameMoney(updated.price_total, line.price_total)) {
+      filled.push(line);
+      continue;
+    }
     changed = true;
     filled.push(updated);
   }
