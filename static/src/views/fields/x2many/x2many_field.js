@@ -332,7 +332,7 @@ export function renderOne2manyField(name, info, node, initialValue, parentValues
     if (!products || products.length === 0) {
       notify({
         type: "info",
-        message: "Aucun produit disponible dans le catalogue",
+        message: "Aucun produit trouvé - créer un produit",
       });
       return;
     }
