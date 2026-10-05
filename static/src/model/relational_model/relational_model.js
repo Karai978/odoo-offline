@@ -124,11 +124,33 @@ function applyOne2manyPatch(containerEl, fieldName, lines, fieldsInfo) {
       const val = line[col];
       const finfo = ref.info;
 
+      if (finfo && finfo.type === "many2many") {
+        // Widget many2many_tags : l'input caché attend un JSON de ids
+        // (cf. syncHiddenValue de many2many_tags_field.js). Les badges
+        // visibles ne sont pas ré-éditables depuis l'extérieur (état en
+        // closure) — ils se rafraîchiront au prochain rendu du formulaire
+        // (recharge post-save, réouverture) ; la donnée (payload) est
+        // immédiatement correcte.
+        const cell = ref.el;
+        const hidden = cell.querySelector('input[type="hidden"]');
+        if (hidden) {
+          const ids = (Array.isArray(val) ? val : [])
+            .map((t) => (Array.isArray(t) ? t[0] : t))
+            .filter((x) => x !== false && x !== null && x !== undefined);
+          const json = JSON.stringify(ids);
+          if (hidden.value !== json) {
+            hidden.value = json;
+            anyChanged = true;
+          }
+        }
+        continue;
+      }
+
       if (finfo && finfo.type === "many2one") {
         const cell = ref.el;
         const hidden = cell.querySelector('input[type="hidden"]');
         const visible = cell.querySelector('input:not([type="hidden"])');
-        if (val && typeof val === "object") {
+        if (val && typeof val === "object" && !Array.isArray(val)) {
           if (hidden && hidden.value !== String(val.id ?? "")) {
             hidden.value = val.id ?? "";
             anyChanged = true;
@@ -137,6 +159,12 @@ function applyOne2manyPatch(containerEl, fieldName, lines, fieldsInfo) {
             visible.value = val.display_name ?? "";
             anyChanged = true;
           }
+        } else if (Array.isArray(val)) {
+          // Défensif : un tableau reçu sur un champ many2one (une règle
+          // qui aurait écrit des taxes m2m dans un champ m2o unique) —
+          // on ne peut pas écrire un tel valeur : on ignore (jamais de
+          // "undefined" dans le DOM).
+          continue;
         } else if (val === false || val === null || val === undefined) {
           if (hidden && hidden.value !== "") {
             hidden.value = "";

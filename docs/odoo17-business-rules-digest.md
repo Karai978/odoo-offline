@@ -396,3 +396,26 @@ Fichiers lus : `addons/web/static/src/model/relational_model/relational_model.js
      (`odoo_record_id` maintenant persisté) : conversion automatique en
      `write` — même comportement que dans Odoo (le record a un id, tout edit
      est un write).
+
+### Correctifs de bugs (retours de test navigateur)
+- **Écriture m2m/m2o dans les cellules de lignes** (relational_model.js
+  `applyOne2manyPatch`) : le widget many2many_tags attend un JSON d'ids
+  dans son input caché — un tableau de paires écrit tel quel devenait
+  `String(tableau)` (illisible) → `NaN`/`[]` après collecte → la ligne
+  restait « incomplète » **indéfiniment** → boucle de refetch à chaque
+  événement (spam 400 console). Branch `many2many` dédié ajouté ; un
+  tableau reçu sur un champ many2one est ignoré définitivement (plus
+  jamais de `"undefined"` écrit dans le DOM).
+- **tax_id (vente) / taxes_id (achat) sont des many2one UNIQUE en Odoo
+  17** : les backfills les remplissaient avec le tableau m2m des taxes du
+  produit (même bug de boucle). → première taxe uniquement, écrite en
+  `{ id, display_name }`.
+- **`needsFill` des backfills de lignes** : une colonne ABSENTE de la vue
+  ne rend plus la ligne « incomplète » (garde `"col" in line`) et un prix
+  volontairement 0 est conservé (seul l'état vide déclenche le remplissage).
+- **`getReferenceRecordsSmart` (name_service.js)** : mémo d'échec par
+  modèle (TTL 5 min) — un modèle non servi par le backend (ex:
+  `product.uom` → 400) n'est plus retenté à chaque événement ; un seul
+  warn console, repli cache immédiat.
+- **favicon.ico 404** : `<link rel="icon">` ajouté dans index.html
+  (assets/icon-192.png).

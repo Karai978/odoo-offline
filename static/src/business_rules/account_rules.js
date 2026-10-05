@@ -227,6 +227,12 @@ onchangeRegistry.add("account.move:invoice_line_ids#product", async (lines, valu
   let refsUom = null;
   let changed = false;
 
+  // Vide = undefined/false/null/"" ou tableau vide (un prix volontairement
+  // 0 est conservé). Une colonne ABSENTE de la vue ne doit JAMAIS rendre
+  // la ligne « incomplète » (boucle de refetch sinon).
+  const isEmptyCell = (v) =>
+    Array.isArray(v) ? v.length === 0 : v === undefined || v === false || v === null || v === "";
+
   const filled = [];
   for (const line of lines) {
     if (!line) { filled.push(line); continue; }
@@ -234,9 +240,9 @@ onchangeRegistry.add("account.move:invoice_line_ids#product", async (lines, valu
     if (!pid || typeof pid === "string") { filled.push(line); continue; }
 
     const needsFill =
-      !line.name ||
-      (line.price_unit === undefined || line.price_unit === false || line.price_unit === 0) ||
-      (Array.isArray(line.tax_ids) ? line.tax_ids.length === 0 : !line.tax_ids);
+      ("name" in line && isEmptyCell(line.name)) ||
+      ("price_unit" in line && isEmptyCell(line.price_unit)) ||
+      ("tax_ids" in line && isEmptyCell(line.tax_ids));
     if (!needsFill) { filled.push(line); continue; }
 
     let product = null;
@@ -261,14 +267,14 @@ onchangeRegistry.add("account.move:invoice_line_ids#product", async (lines, valu
 
     // taxes : taxes_id du produit (le filtre par pays du partner —
     // _compute_tax_ids — est un calcul serveur ; approximation : taxes
-    // brutes du produit, documenté).
+    // brutes du produit, documenté). tax_ids = many2many (tags).
     const taxes = Array.isArray(product.taxes_id) ? product.taxes_id : [];
-    if (taxes.length && (!Array.isArray(updated.tax_ids) || updated.tax_ids.length === 0)) {
+    if (taxes.length && "tax_ids" in updated && isEmptyCell(line.tax_ids)) {
       updated.tax_ids = taxes.map((t) => (Array.isArray(t) ? t : [t, t]));
     }
 
     // prix : list_price (vente) / standard_price (achat)
-    if (line.price_unit === undefined || line.price_unit === false || line.price_unit === 0) {
+    if ("price_unit" in updated && isEmptyCell(line.price_unit)) {
       updated.price_unit = Number(isSale ? product.list_price : product.standard_price) || 0;
     }
 

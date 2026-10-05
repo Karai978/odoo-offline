@@ -172,6 +172,12 @@ onchangeRegistry.add("purchase.order:order_line#product", async (lines, values, 
   let changed = false;
   const orderDate = values.date_order ? String(values.date_order).slice(0, 10) : null;
 
+  // Vide = undefined/false/null/"" ou tableau vide (un prix volontairement
+  // 0 est conservé). Une colonne ABSENTE de la vue ne doit JAMAIS rendre
+  // la ligne « incomplète » (boucle de refetch sinon).
+  const isEmptyCell = (v) =>
+    Array.isArray(v) ? v.length === 0 : v === undefined || v === false || v === null || v === "";
+
   const filled = [];
   for (let i = 0; i < lines.length; i++) {
     let line = lines[i];
@@ -180,11 +186,11 @@ onchangeRegistry.add("purchase.order:order_line#product", async (lines, values, 
     if (!pid || typeof pid === "string") { filled.push(line); continue; }
 
     const needsFill =
-      !line.name ||
-      (line.price_unit === undefined || line.price_unit === false || line.price_unit === 0) ||
-      !line.product_uom ||
-      (Array.isArray(line.tax_ids) ? line.tax_ids.length === 0 : !line.tax_ids) ||
-      (Array.isArray(line.taxes_id) ? line.taxes_id.length === 0 : !line.taxes_id);
+      ("name" in line && isEmptyCell(line.name)) ||
+      ("price_unit" in line && isEmptyCell(line.price_unit)) ||
+      ("product_uom" in line && isEmptyCell(line.product_uom)) ||
+      ("tax_ids" in line && isEmptyCell(line.tax_ids)) ||
+      ("taxes_id" in line && isEmptyCell(line.taxes_id));
     if (!needsFill) { filled.push(line); continue; }
 
     let product = null;
@@ -206,18 +212,23 @@ onchangeRegistry.add("purchase.order:order_line#product", async (lines, values, 
       updated.product_uom = { id: uom.id, display_name: displayOf(refsUom, uom.id) || uom.display_name };
     }
 
-    // taxes : supplier_taxes_id (repli taxes_id)
+    // taxes : supplier_taxes_id (repli taxes_id du produit)
     const taxes = Array.isArray(product.supplier_taxes_id) && product.supplier_taxes_id.length
       ? product.supplier_taxes_id
       : product.taxes_id;
     if (taxes && taxes.length) {
       const normalized = taxes.map((t) => (Array.isArray(t) ? t : [t, t]));
-      if ("tax_ids" in updated && (!Array.isArray(updated.tax_ids) || updated.tax_ids.length === 0)) updated.tax_ids = normalized;
-      if ("taxes_id" in updated && (!Array.isArray(updated.taxes_id) || updated.taxes_id.length === 0)) updated.taxes_id = normalized;
+      // tax_ids = MANY2MANY (widget tags) → tableau de paires
+      if ("tax_ids" in updated && isEmptyCell(line.tax_ids)) updated.tax_ids = normalized;
+      // taxes_id = MANY2ONE UNIQUE en Odoo 17 → première taxe uniquement
+      if ("taxes_id" in updated && isEmptyCell(line.taxes_id)) {
+        const first = normalized[0];
+        updated.taxes_id = { id: first[0], display_name: first[1] ?? String(first[0]) };
+      }
     }
 
     // prix : pas de seller_ids offline → standard_price
-    if (line.price_unit === undefined || line.price_unit === false || line.price_unit === 0) {
+    if ("price_unit" in updated && isEmptyCell(line.price_unit)) {
       updated.price_unit = Number(product.standard_price) || 0;
     }
 

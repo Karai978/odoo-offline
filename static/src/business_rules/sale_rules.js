@@ -348,16 +348,22 @@ onchangeRegistry.add("sale.order:order_line#product", async (lines, values, help
   let changed = false;
   const filled = [];
 
+  // Vide = undefined/false/null/"" — un prix volontairement 0 est conservé.
+  // Une colonne ABSENTE de la vue (pas dans `line`) ne doit JAMAIS rendre
+  // la ligne « incomplète » : sinon la règle resterait active à chaque
+  // événement et refetcherait les produits en boucle.
+  const isEmpty = (v) => v === undefined || v === false || v === null || v === "";
+
   for (const line of lines) {
     if (!line) { filled.push(line); continue; }
     const pid = line.product_id;
     if (!pid || typeof pid === "string") { filled.push(line); continue; } // id local tmp:…
 
     const needsFill =
-      !line.name ||
-      (line.price_unit === undefined || line.price_unit === false || line.price_unit === 0) ||
-      !line.product_uom ||
-      (Array.isArray(line.tax_id) ? line.tax_id.length === 0 : !line.tax_id);
+      ("name" in line && isEmpty(line.name)) ||
+      ("price_unit" in line && isEmpty(line.price_unit)) ||
+      ("product_uom" in line && isEmpty(line.product_uom)) ||
+      ("tax_id" in line && isEmpty(line.tax_id));
     if (!needsFill) { filled.push(line); continue; }
 
     let product = null;
@@ -378,11 +384,17 @@ onchangeRegistry.add("sale.order:order_line#product", async (lines, values, help
       updated.product_uom = { id: uom.id, display_name: displayOf(refsUom, uom.id) || uom.display_name };
     }
 
-    if ((!Array.isArray(updated.tax_id) || updated.tax_id.length === 0) && Array.isArray(product.taxes_id) && product.taxes_id.length) {
-      updated.tax_id = product.taxes_id.map((t) => (Array.isArray(t) ? t : [t, t]));
+    // tax_id est un MANY2ONE UNIQUE sur sale.order.line en Odoo 17
+    // (taxes_id m2m = les taxes additionnelles) → on écrit la première
+    // taxe du produit, comme le fait _compute_tax_id côté serveur.
+    if ("tax_id" in updated && isEmpty(line.tax_id) && Array.isArray(product.taxes_id) && product.taxes_id.length) {
+      const first = product.taxes_id[0];
+      updated.tax_id = Array.isArray(first)
+        ? { id: first[0], display_name: first[1] ?? String(first[0]) }
+        : { id: first, display_name: "" };
     }
 
-    if (line.price_unit === undefined || line.price_unit === false || line.price_unit === 0) {
+    if ("price_unit" in updated && isEmpty(line.price_unit)) {
       // pas de pricelist offline → repli list_price
       updated.price_unit = Number(product.list_price) || 0;
     }
