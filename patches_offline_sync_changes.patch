@@ -1,0 +1,265 @@
+diff --git a/__manifest__.py b/__manifest__.py
+index 782c2a7..dc4837a 100644
+--- a/__manifest__.py
++++ b/__manifest__.py
+@@ -1,6 +1,6 @@
+ {
+     "name": "Offline Sync",
+-    "version": "17.0.1.0.0",
++    "version": "17.0.1.0.1",
+     "summary": "Synchronisation des données saisies hors ligne (PWA) vers Odoo",
+     "category": "Technical",
+     "author": "VLR.34",
+diff --git a/controllers/__init__.py b/controllers/__init__.py
+index 207a427..b499cd8 100644
+--- a/controllers/__init__.py
++++ b/controllers/__init__.py
+@@ -8,3 +8,4 @@ from . import database_controller
+ from . import purchase_dashboard_controller
+ from . import sync_controller
+ from . import catalog_controller
++from . import translation_controller
+diff --git a/controllers/fields_controller.py b/controllers/fields_controller.py
+index 359da5e..adf57aa 100644
+--- a/controllers/fields_controller.py
++++ b/controllers/fields_controller.py
+@@ -13,11 +13,12 @@ class FieldsController(http.Controller, OfflineSyncMixin):
+     champs). Séparé car c'est un usage différent : ici on interroge UN
+     modèle isolé, pas toute une app d'un coup."""
+ 
+-    # Volontairement plus restreint que OfflineSyncMixin.SUPPORTED_TYPES
+-    # (pas de relationnel) — cette route sert des besoins plus légers
+-    # que module_manifest(), qui reste la source complète des champs
+-    # (avec many2one/one2many/many2many inclus).
+-    SIMPLE_FIELD_TYPES = {"char", "text", "integer", "float", "boolean", "selection", "date", "datetime"}
++    # The field selector needs searchable scalar fields and many2one links so
++    # dynamic placeholders can follow relations. X2many fields remain excluded.
++    FIELD_SELECTOR_TYPES = {
++        "char", "text", "integer", "float", "boolean", "selection",
++        "date", "datetime", "monetary", "many2one",
++    }
+ 
+     TECHNICAL_FIELDS = ("id", "create_date", "create_uid", "write_date", "write_uid", "__last_update")
+ 
+@@ -93,7 +94,7 @@ class FieldsController(http.Controller, OfflineSyncMixin):
+         }))
+ 
+     def _get_fields_info(self, env, model_name):
+-        """Champs simples (non-relationnels) d'un modèle, déjà filtrés
++        """Champs scalaires et many2one d'un modèle, déjà filtrés
+         selon les droits par groupe de l'utilisateur porté par env
+         (fields_get() applique automatiquement field.groups= via
+         user_has_groups en interne — pas besoin de refiltrer à la main)."""
+@@ -104,16 +105,27 @@ class FieldsController(http.Controller, OfflineSyncMixin):
+         for fname, finfo in fields_info.items():
+             if fname in self.TECHNICAL_FIELDS:
+                 continue
+-            if finfo.get("type") not in self.SIMPLE_FIELD_TYPES:
++            if finfo.get("type") not in self.FIELD_SELECTOR_TYPES:
+                 continue
+-            result.append({
++            field = Model._fields.get(fname)
++            field_type = finfo.get("type")
++            field_data = {
+                 "name": fname,
+                 "label": finfo.get("string", fname),
+-                "type": finfo.get("type"),
+-                "required": finfo.get("required", False),
+-                "readonly": finfo.get("readonly", False),
+-                "selection": finfo.get("selection") if finfo.get("type") == "selection" else None,
+-            })
++                "type": field_type,
++                "required": bool(finfo.get("required", False)),
++                "readonly": bool(finfo.get("readonly", getattr(field, "readonly", False))),
++                "searchable": bool(finfo.get("searchable", getattr(field, "searchable", False))),
++                "relation": finfo.get("relation") if field_type == "many2one" else None,
++                "selection": finfo.get("selection") if field_type == "selection" else None,
++            }
++            if field_type == "char":
++                field_data.update({
++                    "size": getattr(field, "size", finfo.get("size")),
++                    "trim": bool(getattr(field, "trim", True)),
++                    "translate": bool(getattr(field, "translate", finfo.get("translate", False))),
++                })
++            result.append(field_data)
+         return result
+ 
+     def _get_synced_models(self, env):
+diff --git a/controllers/metadata_controller.py b/controllers/metadata_controller.py
+index 753102b..22f85f1 100644
+--- a/controllers/metadata_controller.py
++++ b/controllers/metadata_controller.py
+@@ -293,13 +293,7 @@ class MetadataController(http.Controller, OfflineSyncMixin):
+                 if finfo.get("type") not in self.SUPPORTED_TYPES:
+                     continue
+ 
+-                field_data = {
+-                    "label": finfo.get("string", fname),
+-                    "type": finfo.get("type"),
+-                    "required": finfo.get("required", False),
+-                    "selection": finfo.get("selection") if finfo.get("type") == "selection" else None,
+-                    "relation": finfo.get("relation") if finfo.get("type") in ("many2one", "one2many", "many2many") else None,
+-                }
++                field_data = self._field_manifest_data(Model, fname, finfo)
+ 
+                 if finfo.get("type") == "one2many":
+                     field_data["relation_field"] = finfo.get("relation_field")
+@@ -313,13 +307,9 @@ class MetadataController(http.Controller, OfflineSyncMixin):
+                                 continue
+                             if sub_finfo.get("type") not in allowed_sub_types:
+                                 continue
+-                            sub_fields[sub_fname] = {
+-                                "label": sub_finfo.get("string", sub_fname),
+-                                "type": sub_finfo.get("type"),
+-                                "required": sub_finfo.get("required", False),
+-                                "selection": sub_finfo.get("selection") if sub_finfo.get("type") == "selection" else None,
+-                                "relation": sub_finfo.get("relation") if sub_finfo.get("type") in ("many2one", "many2many") else None,
+-                            }
++                            sub_fields[sub_fname] = self._field_manifest_data(
++                                env[related_model], sub_fname, sub_finfo
++                            )
+                         field_data["sub_fields"] = sub_fields
+ 
+                 fields_payload[model_name][fname] = field_data
+@@ -335,3 +325,25 @@ class MetadataController(http.Controller, OfflineSyncMixin):
+             "views": views_payload,
+             "menus": menus,
+         }))
++
++    @staticmethod
++    def _field_manifest_data(model, fname, finfo):
++        """Return JSON-safe field metadata needed by the PWA field widgets."""
++        field = model._fields.get(fname)
++        field_type = finfo.get("type")
++        data = {
++            "label": finfo.get("string", fname),
++            "type": field_type,
++            "required": bool(finfo.get("required", False)),
++            "readonly": bool(finfo.get("readonly", getattr(field, "readonly", False))),
++            "searchable": bool(finfo.get("searchable", getattr(field, "searchable", False))),
++            "selection": finfo.get("selection") if field_type == "selection" else None,
++            "relation": finfo.get("relation") if field_type in ("many2one", "one2many", "many2many") else None,
++        }
++        if field_type == "char":
++            data.update({
++                "size": getattr(field, "size", finfo.get("size")),
++                "trim": bool(getattr(field, "trim", True)),
++                "translate": bool(getattr(field, "translate", finfo.get("translate", False))),
++            })
++        return data
+diff --git a/controllers/translation_controller.py b/controllers/translation_controller.py
+new file mode 100644
+index 0000000..8b81e76
+--- /dev/null
++++ b/controllers/translation_controller.py
+@@ -0,0 +1,95 @@
++"""Authenticated helpers for Odoo's native translated-field API."""
++
++import json
++import logging
++
++from odoo import http  # type: ignore
++from odoo.exceptions import AccessError  # type: ignore
++from odoo.http import request  # type: ignore
++
++from .common import OfflineSyncMixin
++
++_logger = logging.getLogger(__name__)
++
++
++class TranslationController(http.Controller, OfflineSyncMixin):
++    @http.route(
++        "/offline_sync/field_translations",
++        type="http",
++        auth="none",
++        methods=["GET", "POST", "OPTIONS"],
++        csrf=False,
++    )
++    def field_translations(self, model=None, record_id=None, field_name=None, **kwargs):
++        if request.httprequest.method == "OPTIONS":
++            return self._cors_response()
++
++        user = self._authenticate_api_key()
++        if not user:
++            return self._cors_response(json.dumps({"error": "Clé API invalide"}), status=401)
++
++        method = request.httprequest.method
++        if method == "POST":
++            try:
++                body = json.loads(request.httprequest.data or b"{}")
++            except (TypeError, ValueError):
++                return self._cors_response(json.dumps({"error": "Corps JSON invalide"}), status=400)
++            model = body.get("model", model)
++            record_id = body.get("record_id", record_id)
++            field_name = body.get("field_name", field_name)
++            translations = body.get("translations")
++        else:
++            translations = None
++
++        env = request.env(user=user.id)
++        if not model or model not in env:
++            return self._cors_response(json.dumps({"error": "Modèle invalide"}), status=400)
++        try:
++            record_id = int(record_id)
++        except (TypeError, ValueError):
++            return self._cors_response(json.dumps({"error": "Identifiant invalide"}), status=400)
++
++        Model = env[model]
++        field = Model._fields.get(field_name)
++        # _fields contains private fields too; fields_get applies group-based
++        # field visibility for the authenticated user.
++        if (
++            not field
++            or field_name not in Model.fields_get([field_name])
++            or field.type != "char"
++            or not bool(getattr(field, "translate", False))
++        ):
++            return self._cors_response(json.dumps({"error": "Champ Char traduisible introuvable"}), status=404)
++
++        record = Model.browse(record_id).exists()
++        if not record:
++            return self._cors_response(json.dumps({"error": "Enregistrement introuvable"}), status=404)
++
++        access_mode = "read" if method == "GET" else "write"
++        try:
++            Model.check_access_rights(access_mode)
++            record.check_access_rule(access_mode)
++        except AccessError:
++            return self._cors_response(json.dumps({"error": "Accès refusé"}), status=403)
++
++        try:
++            if method == "GET":
++                # Keep the same argument convention as Odoo's web ORM call.
++                terms, context = Model.get_field_translations([record_id], field_name)
++                result = {
++                    "translations": terms,
++                    "context": context,
++                    "languages": env["res.lang"].get_installed(),
++                    "user_lang": env.user.lang,
++                }
++                return self._cors_response(json.dumps(self._json_safe(result)))
++
++            if not isinstance(translations, dict):
++                return self._cors_response(json.dumps({"error": "Translations doit être un objet"}), status=400)
++            Model.update_field_translations([record_id], field_name, translations)
++            return self._cors_response(json.dumps({"ok": True}))
++        except AccessError:
++            return self._cors_response(json.dumps({"error": "Accès refusé"}), status=403)
++        except Exception as error:
++            _logger.exception("Erreur API de traduction %s.%s#%s", model, field_name, record_id)
++            return self._cors_response(json.dumps({"error": str(error)}), status=400)
+diff --git a/models/sync_queue.py b/models/sync_queue.py
+index fea24ee..c529156 100644
+--- a/models/sync_queue.py
++++ b/models/sync_queue.py
+@@ -303,7 +303,9 @@ class SyncQueue(models.Model):
+         prepared = {}
+         fields_info = target_model.fields_get()
+ 
+-        WRITABLE_FALSY_TYPES = ("boolean", "integer", "float", "monetary")
++        # Empty Char strings are meaningful: they clear an existing value.
++        # The other types preserve the historical falsy-value filtering.
++        WRITABLE_FALSY_TYPES = ("boolean", "integer", "float", "monetary", "char")
+ 
+         for fname, value in data.items():
+             finfo = fields_info.get(fname)
