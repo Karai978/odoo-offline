@@ -35,7 +35,8 @@ export function attachLiveBusinessRules(archXmlString, containerEl, fieldsInfo) 
       const fieldName = node.getAttribute("name");
       if (!fieldName) return;
 
-      const wrapperEl = containerEl.querySelector(`[data-field-row="${fieldName}"] .o_field_widget`);
+      const wrapperEl = containerEl.querySelector(`[data-field-row="${fieldName}"] .o_field_widget`)
+        || containerEl.querySelector(`[data-field-value="${fieldName}"]`)?.closest(".o_field_widget");
       if (!wrapperEl) return;
 
       const info = fieldsInfo[fieldName];
@@ -70,22 +71,66 @@ export function attachLiveOnchange(model, containerEl, fieldsInfo, helpers) {
 
   function applyPatch(patch) {
     for (const [fieldName, value] of Object.entries(patch)) {
-      const rowEl = containerEl.querySelector(`[data-field-row="${fieldName}"]`);
+      const rowEl = containerEl.querySelector(`[data-field-row="${fieldName}"]`)
+        || containerEl.querySelector(`[data-field-value="${fieldName}"]`)?.closest("[data-field-row]");
       if (!rowEl) continue;
 
       const finfo = fieldsInfo[fieldName];
-      if (finfo && finfo.type === "many2one" && value && typeof value === "object") {
-        // Many2one : deux inputs à synchroniser (texte affiché + id caché) —
-        // même paire que celle posée par renderMany2oneField().
+      if (finfo && finfo.type === "many2one") {
+        // Keep the visible label, canonical relation ID, radio choices, and
+        // avatar/badge presentation in sync for all many2one widgets.
+        const normalized = Array.isArray(value)
+          ? { id: value[0], display_name: value[1] }
+          : value && typeof value === "object"
+            ? value
+            : value
+              ? { id: value, display_name: `#${value}` }
+              : null;
+        const selectedId = normalized?.id == null || normalized.id === false ? "" : normalized.id;
+        const displayName = normalized?.display_name == null || normalized.display_name === false
+          ? ""
+          : String(normalized.display_name);
         const hiddenId = rowEl.querySelector(`input[name="${fieldName}_id"]`);
         const visibleInput = rowEl.querySelector(`input#field-${fieldName}`);
-        if (hiddenId) hiddenId.value = value.id ?? "";
-        if (visibleInput) visibleInput.value = value.display_name ?? "";
+        if (hiddenId) hiddenId.value = selectedId;
+        if (visibleInput) visibleInput.value = displayName;
+        rowEl.querySelectorAll(`input[type="radio"][name="${fieldName}__radio"]`).forEach((radio) => {
+          radio.checked = String(radio.value) === String(selectedId);
+        });
+        const badge = rowEl.querySelector(".o_field_badge .badge");
+        if (badge) badge.textContent = displayName;
+        const avatar = rowEl.querySelector(".o_field_many2one_avatar .o_avatar");
+        if (avatar) {
+          avatar.textContent = String(displayName || "?").trim().split(/\s+/).filter(Boolean)
+            .slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "?";
+        }
+      } else if (finfo && finfo.type === "many2many") {
+        const widget = rowEl.querySelector(".o_field_widget")?.firstElementChild;
+        if (typeof widget?._setFieldValue === "function") {
+          widget._setFieldValue(value);
+        } else {
+          const hidden = rowEl.querySelector(`input[name="${fieldName}"]`);
+          if (!hidden) continue;
+          const ids = Array.isArray(value)
+            ? value.map((item) => Array.isArray(item) ? item[0] : (item && typeof item === "object" ? item.id : item))
+            : [];
+          hidden.value = JSON.stringify(ids);
+        }
       } else {
-        const input = rowEl.querySelector("input, select, textarea");
+        const widget = rowEl.querySelector(".o_field_widget")?.firstElementChild;
+        if (typeof widget?._setFieldValue === "function") {
+          widget._setFieldValue(value);
+          continue;
+        }
+        const input = rowEl.querySelector(`[id="field-${fieldName}"]`)
+          || rowEl.querySelector(`[data-field-value="${fieldName}"]`)
+          || rowEl.querySelector("input, select, textarea");
         if (!input) continue;
         if (input.type === "checkbox") {
           input.checked = !!value;
+        } else if (input.dataset.fieldWidget === "float_factor") {
+          const factor = Number(input.dataset.factor) || 1;
+          input.value = value == null || value === false ? "" : Number(value) * factor;
         } else {
           input.value = value ?? "";
         }
@@ -95,7 +140,7 @@ export function attachLiveOnchange(model, containerEl, fieldsInfo, helpers) {
 
   async function handler(e) {
     const rowEl = e.target?.closest("[data-field-row]");
-    const fieldName = rowEl?.dataset.fieldRow;
+    const fieldName = e.target?.dataset?.fieldValue || rowEl?.dataset.fieldRow;
     if (!fieldName) return;
 
     // Une clé sans "#" (ex. "sale.order:partner_id") reste une règle unique

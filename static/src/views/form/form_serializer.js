@@ -1,8 +1,8 @@
 /**
- * views/form/form_serializer.js
- * Serializes the current DOM state of a rendered form into a values ​​object, ready to
- * be sent via core/network/rpc_service.js.
+ * Serialize the current form DOM into values accepted by the offline write
+ * queue. Widget-specific presentation is normalized back to Odoo field data.
  */
+import { parseFloatTime } from "../fields/float/float_field.js";
 
 export function collectFormData(container, fieldsInfo) {
   const data = {};
@@ -65,7 +65,8 @@ export function collectFormData(container, fieldsInfo) {
       continue;
     }
 
-    const el = container.querySelector(`#field-${fieldName}`);
+    const el = container.querySelector(`[id="field-${fieldName}"]`)
+      || container.querySelector(`[data-field-value="${fieldName}"]`);
     if (!el) continue;
     data[fieldName] = getElementValue(el, info);
   }
@@ -73,35 +74,57 @@ export function collectFormData(container, fieldsInfo) {
   return data;
 }
 
-export function getElementValue(el, info) {
-  switch (info.type) {
-    case "boolean":
-      return el.checked;
-    case "integer":
-      return el.value ? parseInt(el.value, 10) : false;
-    case "float":
-      return el.value ? parseFloat(el.value) : false;
-    case "monetary":
-      return el.value ? parseFloat(el.value) : false;
-    case "many2one": {
-      const hidden = el.querySelector('input[type="hidden"]');
-      const rawVal = hidden ? hidden.value : "";
-      return rawVal
-        ? (rawVal.startsWith("tmp:") ? rawVal : parseInt(rawVal, 10))
-        : false;
+function getControlElement(element) {
+  if (!element) return null;
+  if (["INPUT", "SELECT", "TEXTAREA"].includes(element.tagName)) return element;
+  return element.querySelector("input[type=checkbox]")
+    || element.querySelector("input, select, textarea");
+}
+
+export function getElementValue(element, info) {
+  if (info.type === "many2one") {
+    const hidden = element?.querySelector?.('input[type="hidden"]');
+    const rawVal = hidden ? hidden.value : "";
+    return rawVal ? (rawVal.startsWith("tmp:") ? rawVal : parseInt(rawVal, 10)) : false;
+  }
+  if (info.type === "many2many") {
+    const hidden = element?.querySelector?.('input[type="hidden"]');
+    if (!hidden || !hidden.value) return [];
+    try {
+      return JSON.parse(hidden.value);
+    } catch (e) {
+      return [];
     }
-    case "many2many": {
-      const hidden = el.querySelector('input[type="hidden"]');
-      if (!hidden || !hidden.value) return [];
-      try {
-        return JSON.parse(hidden.value);
-      } catch (e) {
-        return [];
+  }
+
+  const control = getControlElement(element);
+  if (!control) return false;
+  if (info.type === "boolean") return !!control.checked;
+
+  const raw = control.value;
+  if (raw === "") return false;
+
+  switch (info.type) {
+    case "integer":
+      return Number.isFinite(parseInt(raw, 10)) ? parseInt(raw, 10) : false;
+    case "float": {
+      if (control.dataset.fieldWidget === "float_time") return parseFloatTime(raw);
+      const value = Number.parseFloat(raw);
+      if (!Number.isFinite(value)) return false;
+      if (control.dataset.fieldWidget === "float_factor") {
+        const factor = Number(control.dataset.factor) || 1;
+        return value / factor;
       }
+      return value;
+    }
+    case "monetary": {
+      const value = Number.parseFloat(raw);
+      return Number.isFinite(value) ? value : false;
     }
     case "date":
-      return el.value || false;
+    case "datetime":
+      return raw || false;
     default:
-      return el.value || false;
+      return raw || false;
   }
 }

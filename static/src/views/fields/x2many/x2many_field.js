@@ -101,6 +101,7 @@ export function renderOne2manyField(name, info, node, initialValue, parentValues
           label: fieldNode.getAttribute("string") || subFields[fname].label,
           optional: optional || null,
           visible: optional !== "hide",
+          node: fieldNode,
         });
       }
     }
@@ -490,7 +491,7 @@ export function renderOne2manyField(name, info, node, initialValue, parentValues
       if (!col.visible) td.classList.add("d-none");
       const finfo = subFields[col.field];
       const uniqueName = `${name}__${col.field}__${one2manyRowCounter}`;
-      const inputEl = createFieldInput(uniqueName, finfo, rowData[col.field]);
+      const inputEl = createFieldInput(uniqueName, finfo, rowData[col.field], col.node || null, rowData);
       cellRefs[col.field] = { el: inputEl, info: finfo };
       td.appendChild(inputEl);
       tr.appendChild(td);

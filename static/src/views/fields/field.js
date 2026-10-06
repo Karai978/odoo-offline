@@ -1,26 +1,57 @@
 /**
- * views/fields/field.js
- * converts an XML architecture node (<field name="..."/>) into an HTML component 
- * incorporating labels, the graphical component associated with the data type, 
- * and dynamic attributes (readonly, required)
-*/
-
+ * Convert an XML <field> node into its Odoo type-specific or widget-specific
+ * form control. Unknown widget names deliberately fall back to the field type.
+ */
 import { applyDynamicAttrs } from "../../model/relational_model/dynamic_field_attrs.js";
 
-import { renderCharField } from "./char/char_field.js";
+import {
+  renderBadgeField,
+  renderCharField,
+  renderCharTextareaField,
+  renderEmailField,
+  renderLinkButtonField,
+  renderPhoneField,
+  renderUrlField,
+} from "./char/char_field.js";
 import { renderTextField } from "./text/text_field.js";
 import { renderIntegerField } from "./integer/integer_field.js";
-import { renderFloatField } from "./float/float_field.js";
-import { renderBooleanField } from "./boolean/boolean_field.js";
-import { renderSelectionField } from "./selection/selection_field.js";
-import { renderDateField } from "./date/date_field.js";
+import {
+  renderFloatField,
+  renderFloatFactorField,
+  renderFloatTimeField,
+  renderFloatToggleField,
+  renderPercentPieField,
+  renderPercentageField,
+  renderProgressBarField,
+  renderStatInfoField,
+} from "./float/float_field.js";
+import {
+  renderBooleanField,
+  renderBooleanFavoriteField,
+  renderBooleanToggleField,
+} from "./boolean/boolean_field.js";
+import {
+  renderLabelSelectionField,
+  renderPriorityField,
+  renderRadioField,
+  renderSelectionBadgeField,
+  renderSelectionField,
+} from "./selection/selection_field.js";
+import { renderDateField, renderDateRangeField, renderRemainingDaysField } from "./date/date_field.js";
 import { renderDatetimeField } from "./datetime/datetime_field.js";
 import { renderMonetaryField } from "./monetary/monetary_field.js";
-import { renderMany2oneField } from "./many2one/many2one_field.js";
-import { renderMany2manyTagsField } from "./many2many_tags/many2many_tags_field.js";
+import {
+  renderMany2oneAvatarField,
+  renderMany2oneField,
+  renderMany2oneRadioField,
+} from "./many2one/many2one_field.js";
+import {
+  renderMany2manyCheckboxesField,
+  renderMany2manyTagsField,
+} from "./many2many_tags/many2many_tags_field.js";
 import { renderOne2manyField } from "./x2many/x2many_field.js";
 
-const SUPPORTED_FIELD_WIDGETS = {
+const TYPE_RENDERERS = {
   char: renderCharField,
   text: renderTextField,
   integer: renderIntegerField,
@@ -35,6 +66,78 @@ const SUPPORTED_FIELD_WIDGETS = {
   many2many: renderMany2manyTagsField,
 };
 
+// Widget renderers are scoped to Odoo field types, so an unsupported or
+// incompatible `widget` attribute cannot break the fallback type renderer.
+const WIDGET_RENDERERS = {
+  char: {
+    email: renderEmailField,
+    phone: renderPhoneField,
+    url: renderUrlField,
+    badge: renderBadgeField,
+    link_button: renderLinkButtonField,
+    text: renderCharTextareaField,
+    textarea: renderCharTextareaField,
+    domain: renderCharTextareaField,
+    ace: renderCharTextareaField,
+  },
+  text: {
+    badge: renderBadgeField,
+  },
+  integer: {
+    progressbar: renderProgressBarField,
+    percentpie: renderPercentPieField,
+    statinfo: renderStatInfoField,
+  },
+  float: {
+    float_time: renderFloatTimeField,
+    float_factor: renderFloatFactorField,
+    float_toggle: renderFloatToggleField,
+    percentage: renderPercentageField,
+    progressbar: renderProgressBarField,
+    percentpie: renderPercentPieField,
+    statinfo: renderStatInfoField,
+  },
+  monetary: {
+    statinfo: renderStatInfoField,
+  },
+  boolean: {
+    boolean_toggle: renderBooleanToggleField,
+    boolean_favorite: renderBooleanFavoriteField,
+  },
+  selection: {
+    radio: renderRadioField,
+    priority: renderPriorityField,
+    selection_badge: renderSelectionBadgeField,
+    label_selection: renderLabelSelectionField,
+    badge: renderBadgeField,
+  },
+  date: {
+    daterange: renderDateRangeField,
+    remaining_days: renderRemainingDaysField,
+  },
+  datetime: {
+    daterange: renderDateRangeField,
+    remaining_days: renderRemainingDaysField,
+  },
+  many2one: {
+    radio: renderMany2oneRadioField,
+    many2one_avatar: renderMany2oneAvatarField,
+    many2one_avatar_user: renderMany2oneAvatarField,
+    many2one_avatar_employee: renderMany2oneAvatarField,
+    many2one_avatar_partner: renderMany2oneAvatarField,
+    badge: renderBadgeField,
+  },
+  many2many: {
+    many2many_checkboxes: renderMany2manyCheckboxesField,
+  },
+};
+
+function getFieldRenderer(info, node) {
+  const widget = node?.getAttribute("widget");
+  const fieldType = info?.type;
+  return (widget && WIDGET_RENDERERS[fieldType]?.[widget]) || TYPE_RENDERERS[fieldType] || null;
+}
+
 export function renderField(node, fieldsInfo, initialValues, securityContext, hasRecordId) {
   const fieldName = node.getAttribute("name");
   if (!fieldName) return null;
@@ -42,7 +145,7 @@ export function renderField(node, fieldsInfo, initialValues, securityContext, ha
   const info = fieldsInfo[fieldName];
   if (!info) return null;
 
-  const renderer = SUPPORTED_FIELD_WIDGETS[info.type];
+  const renderer = getFieldRenderer(info, node);
   if (!renderer) return null;
 
   const cell = document.createElement("div");
@@ -58,11 +161,10 @@ export function renderField(node, fieldsInfo, initialValues, securityContext, ha
 
   const initialValue = initialValues ? initialValues[fieldName] : undefined;
 
-  // "New" simulation (100% offline): a read-only field (e.g., sequence
-  // name) that is empty in creation mode never displays an empty input in
-  // Odoo, but rather the text "New"—without a network call.
+  // Simulate the sequence placeholder locally for empty readonly fields on
+  // creation; this keeps the form offline and avoids an empty edit control.
   const readonlyAttr = node.getAttribute("readonly");
-  const isStaticReadonly = readonlyAttr === "1" || readonlyAttr === "true";
+  const isStaticReadonly = readonlyAttr === "1" || readonlyAttr === "true" || readonlyAttr === "True";
   const isEmptyValue =
     initialValue === undefined || initialValue === null ||
     initialValue === false || initialValue === "";
@@ -95,9 +197,9 @@ export function renderField(node, fieldsInfo, initialValues, securityContext, ha
   return cell;
 }
 
-/** Used by fields/x2many/x2many_field.js to create a row input cell. */
-export function createFieldInput(fieldName, info, initialValue) {
-  const renderer = SUPPORTED_FIELD_WIDGETS[info.type];
+/** Used by x2many sublists to create a field control without a form row. */
+export function createFieldInput(fieldName, info, initialValue, node = null, initialValues = {}) {
+  const renderer = getFieldRenderer(info, node);
   if (!renderer) return null;
-  return renderer(fieldName, info, null, initialValue);
+  return renderer(fieldName, info, node, initialValue, initialValues);
 }

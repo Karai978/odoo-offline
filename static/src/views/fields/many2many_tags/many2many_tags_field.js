@@ -46,8 +46,12 @@ export function renderMany2manyTagsField(name, info, node, initialValue) {
   hiddenInput.name = name;
   wrapper.appendChild(hiddenInput);
 
-  function syncHiddenValue() {
+  function syncHiddenValue(notifyChange = false) {
     hiddenInput.value = JSON.stringify(selected.map(([id]) => id));
+    if (notifyChange) {
+      hiddenInput.dispatchEvent(new Event("input", { bubbles: true }));
+      hiddenInput.dispatchEvent(new Event("change", { bubbles: true }));
+    }
   }
 
   function renderTags() {
@@ -67,13 +71,24 @@ export function renderMany2manyTagsField(name, info, node, initialValue) {
         e.preventDefault();
         selected = selected.filter(([sid]) => sid !== id);
         renderTags();
-        syncHiddenValue();
+        syncHiddenValue(true);
       });
       tag.appendChild(removeBtn);
 
       tagsContainer.appendChild(tag);
     });
   }
+
+  wrapper._setFieldValue = (value) => {
+    selected = (Array.isArray(value) ? value : []).map((item) => {
+      const id = Array.isArray(item) ? item[0] : (item && typeof item === "object" ? item.id : item);
+      const cached = cachedRecords.find((record) => String(record.id) === String(id));
+      const label = Array.isArray(item) ? item[1] : (item && typeof item === "object" ? item.display_name : cached?.display_name);
+      return [id, label || String(id ?? "")];
+    }).filter(([id]) => id !== undefined && id !== null && id !== false);
+    renderTags();
+    syncHiddenValue();
+  };
 
   function closeDropdown() {
     dropdown.style.display = "none";
@@ -104,7 +119,7 @@ export function renderMany2manyTagsField(name, info, node, initialValue) {
         e.preventDefault();
         selected.push([record.id, record.display_name]);
         renderTags();
-        syncHiddenValue();
+        syncHiddenValue(true);
         input.value = "";
         closeDropdown();
       });
@@ -122,5 +137,81 @@ export function renderMany2manyTagsField(name, info, node, initialValue) {
   renderTags();
   syncHiddenValue();
 
+  return wrapper;
+}
+/** Odoo's `many2many_checkboxes` widget, backed by the existing relation cache. */
+export function renderMany2manyCheckboxesField(name, info, node, initialValue) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "o_field_many2many_checkboxes d-flex flex-column gap-1";
+
+  const selected = new Map();
+  (Array.isArray(initialValue) ? initialValue : []).forEach((item) => {
+    const id = Array.isArray(item) ? item[0] : (item && typeof item === "object" ? item.id : item);
+    const label = Array.isArray(item) ? item[1] : (item && typeof item === "object" ? item.display_name : String(item ?? ""));
+    if (id !== undefined && id !== null && id !== false) selected.set(String(id), label || String(id));
+  });
+
+  const hiddenInput = document.createElement("input");
+  hiddenInput.type = "hidden";
+  hiddenInput.id = `field-${name}`;
+  hiddenInput.name = name;
+  wrapper.appendChild(hiddenInput);
+
+  function syncSelection(notifyChange = false) {
+    const ids = Array.from(selected.keys()).map((id) => /^\d+$/.test(id) ? Number(id) : id);
+    hiddenInput.value = JSON.stringify(ids);
+    if (notifyChange) {
+      hiddenInput.dispatchEvent(new Event("input", { bubbles: true }));
+      hiddenInput.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+  }
+
+  function renderRecords(records) {
+    wrapper.querySelectorAll("label").forEach((label) => label.remove());
+    const knownIds = new Set(records.map((record) => String(record.id)));
+    const missingSelected = Array.from(selected, ([id, display_name]) => ({ id, display_name }))
+      .filter((record) => !knownIds.has(String(record.id)));
+    [...records, ...missingSelected].slice(0, 200).forEach((record, index) => {
+      const id = String(record.id);
+      const label = document.createElement("label");
+      label.className = "form-check d-flex align-items-center gap-2 mb-0";
+
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.className = "form-check-input mt-0";
+      checkbox.id = `field-${name}-option-${index}`;
+      checkbox.value = id;
+      checkbox.checked = selected.has(id);
+      checkbox.addEventListener("change", () => {
+        if (checkbox.checked) selected.set(id, record.display_name || id);
+        else selected.delete(id);
+        syncSelection(true);
+      });
+
+      const text = document.createElement("span");
+      text.textContent = record.display_name || id;
+      label.append(checkbox, text);
+      wrapper.appendChild(label);
+    });
+    syncSelection();
+  }
+
+  wrapper._setFieldValue = (value) => {
+    selected.clear();
+    (Array.isArray(value) ? value : []).forEach((item) => {
+      const id = Array.isArray(item) ? item[0] : (item && typeof item === "object" ? item.id : item);
+      const label = Array.isArray(item) ? item[1] : (item && typeof item === "object" ? item.display_name : String(item ?? ""));
+      if (id !== undefined && id !== null && id !== false) selected.set(String(id), label || String(id));
+    });
+    wrapper.querySelectorAll("input[type=checkbox]").forEach((checkbox) => {
+      checkbox.checked = selected.has(String(checkbox.value));
+    });
+    syncSelection();
+  };
+
+  syncSelection();
+  getReferenceRecords(info.relation).then(renderRecords).catch((err) => {
+    console.warn(`Relation ${info.relation}:`, err);
+  });
   return wrapper;
 }
