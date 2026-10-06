@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<templates xml:space="preserve">
+    <t t-name="offline_webclient_17.OfflineStatusIndicator">
+        <li t-if="!state.online"
+            class="o_offline_webclient_17_status"
+            role="status"
+            aria-live="polite"
+            title="Hors ligne : seules les lectures déjà mises en cache sont disponibles">
+            <i class="fa fa-cloud-download me-1" aria-hidden="true"/>
+            <span>Hors ligne — lectures en cache</span>
+        </li>
+    </t>
+</templates>
