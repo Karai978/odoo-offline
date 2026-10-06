@@ -75,6 +75,10 @@ export function evaluateSimpleCondition(expr, currentValues, parentValues = null
   for (const key of Object.keys(values)) {
     if (Array.isArray(values[key]) && values[key].length === 0) {
       values[key] = false;
+    } else if (values[key] === "") {
+      // Odoo Char fields expose an empty value as False in modifier expressions,
+      // while the offline serializer keeps "" so the write payload can clear it.
+      values[key] = false;
     }
   }
 

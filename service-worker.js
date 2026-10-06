@@ -2,7 +2,7 @@
  * service-worker.js
  */
 
-const CACHE_NAME = "offline-sync-standalone-v24";
+const CACHE_NAME = "offline-sync-standalone-v25";
 
 const ASSETS_TO_CACHE = [
   "./",
@@ -11,6 +11,7 @@ const ASSETS_TO_CACHE = [
   "./static/src/bundles/app.bundle.js",
   "./static/lib/dexie.min.js",
   "./static/lib/popper.js",
+  "./static/lib/owl.iife.js",
   "./static/src/webclient/home_menu/home_menu.css",
   "./css/web.assets_web.min.css",
   "./css/web.assets_frontend.min.css",

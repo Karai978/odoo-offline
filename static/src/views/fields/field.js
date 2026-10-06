@@ -62,7 +62,7 @@ export function renderField(node, fieldsInfo, initialValues, securityContext, ha
   // name) that is empty in creation mode never displays an empty input in
   // Odoo, but rather the text "New"—without a network call.
   const readonlyAttr = node.getAttribute("readonly");
-  const isStaticReadonly = readonlyAttr === "1" || readonlyAttr === "true";
+  const isStaticReadonly = ["1", "True", "true"].includes(readonlyAttr);
   const isEmptyValue =
     initialValue === undefined || initialValue === null ||
     initialValue === false || initialValue === "";
@@ -75,7 +75,7 @@ export function renderField(node, fieldsInfo, initialValues, securityContext, ha
     inputEl.setAttribute("data-field", fieldName);
     inputEl.textContent = "Nouveau";
   } else {
-    inputEl = renderer(fieldName, info, node, initialValue, initialValues);
+    inputEl = renderer(fieldName, info, node, initialValue, initialValues, fieldsInfo);
   }
 
   applyDynamicAttrs(node, inputEl, initialValues);

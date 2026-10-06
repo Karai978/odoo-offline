@@ -12,6 +12,7 @@ import { getReferenceRecordsSmart } from "../../core/name_service.js";
 import { getRecordSmart, getCachedRecord } from "../../core/record_cache.js";
 import { getSecurityInfo } from "../../core/user_service.js";
 import { renderFormView } from "./form_renderer.js";
+import { destroyCharFields } from "../fields/char/char_field.js";
 import { attachLiveBusinessRules, attachLiveOnchange } from "../../model/relational_model/relational_model.js";
 import { constraintsRegistry } from "../../model/relational_model/business_rules_registry.js";
 import { collectFormData } from "./form_serializer.js";
@@ -101,6 +102,13 @@ export async function mountFormController(container, params, env) {
 
       return () => {};
     }
+
+    // Pass model context to OWL char widgets without polluting Object.entries()
+    // used by form serialization.
+    Object.defineProperties(fieldsInfo, {
+      _modelName: { value: model, configurable: true },
+      _allModels: { value: manifest.fields || {}, configurable: true },
+    });
 
     archXml = modelViews.form.arch;
 
@@ -193,11 +201,12 @@ export async function mountFormController(container, params, env) {
     const { __reference_write_date__, ...cleanValues } = freshRecord;
     currentReferenceValues = cleanValues;
 
-    const newFormEl = renderFormView(archXml, currentFieldsInfo, freshRecord, currentSecurityContext, onObjectButtonClick);
-    newFormEl.dataset.model = model;
-
     cleanupRules();
     cleanupOnchange();
+    destroyCharFields();
+
+    const newFormEl = renderFormView(archXml, currentFieldsInfo, freshRecord, currentSecurityContext, onObjectButtonClick);
+    newFormEl.dataset.model = model;
     currentContainer.replaceWith(newFormEl);
     currentContainer = newFormEl;
     cleanupRules = attachLiveBusinessRules(archXml, newFormEl, currentFieldsInfo);
@@ -424,5 +433,6 @@ export async function mountFormController(container, params, env) {
   return () => {
     cleanupRules();
     cleanupOnchange();
+    destroyCharFields();
   };
 }

@@ -7,6 +7,7 @@
 
 import { getReferenceRecords } from "../../core/name_service.js";
 import { computeRegistry } from "./business_rules_registry.js";
+import { getCharFieldValue } from "../../views/fields/char/char_field.js";
 
 // Cas connus livrés avec le moteur — avant, ces noms de champs étaient
 // devinés à l'aveugle pour N'IMPORTE QUEL sous-modèle (voir ancien code).
@@ -39,7 +40,10 @@ function computeTotalFromRows(tbody, comodelName) {
     .map((tr) => {
       const values = {};
       for (const [fieldName, ref] of Object.entries(tr._cellRefs)) {
-        values[fieldName] = parseFloat(ref.el.value) || 0;
+        const rawValue = ref.info?.type === "char"
+          ? getCharFieldValue(ref.el)
+          : ref.el?.value ?? ref.el?.querySelector?.("input, select, textarea")?.value;
+        values[fieldName] = parseFloat(rawValue) || 0;
       }
       return values;
     });

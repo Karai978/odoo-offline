@@ -132,3 +132,11 @@ git reset --hard origin/main
 
 #### 3 - Effacer les nouveaux fichiers créés
 git clean -fd
+
+# Migration progressive vers OWL
+
+OWL 2.8.2 est chargé depuis `static/lib/owl.iife.js` avant le bundle et mis en cache par le service worker. La migration est incrémentale : le premier composant OWL est `CharField`; les autres widgets et le shell restent rendus par le code DOM existant.
+
+Le widget `char` gère les valeurs éditables et readonly, le masquage des champs `password`, l'autocomplete, le placeholder statique, la longueur maximale quand elle est fournie par les métadonnées, et le trim. L'adaptateur conserve les contrats DOM existants (sérialisation, règles dynamiques et champs char imbriqués dans les lignes one2many), et détruit les applications OWL lors du démontage des formulaires.
+
+L'adaptateur PWA fournit aussi les options de placeholder dynamique (sélection de champs scalaires et navigation many2one), l'icône et la boîte de traduction des champs Char, tout en conservant l'intégration avec les règles dynamiques, onchange et la sérialisation one2many. Le module serveur `offline_sync` correspondant doit être mis à jour pour exposer les métadonnées `size`, `trim`, `translate`, `searchable` et `relation`, proposer `/offline_sync/model_fields` et `/offline_sync/field_translations`, et transmettre les chaînes vides afin de permettre l'effacement des valeurs Char. Les traductions nécessitent une connexion et un enregistrement déjà sauvegardé ; les formulaires et placeholders restent utilisables hors ligne à partir des métadonnées en cache.

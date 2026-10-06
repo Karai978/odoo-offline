@@ -4,6 +4,8 @@
  * be sent via core/network/rpc_service.js.
  */
 
+import { getCharFieldValue } from "../fields/char/char_field.js";
+
 export function collectFormData(container, fieldsInfo) {
   const data = {};
 
@@ -75,6 +77,11 @@ export function collectFormData(container, fieldsInfo) {
 
 export function getElementValue(el, info) {
   switch (info.type) {
+    case "char":
+      // Preserve "" so Odoo can clear a Char field. The current offline_sync
+      // adapter drops blank values in _prepare_values; that server-side path
+      // must allow this value for clearing to reach the ORM.
+      return getCharFieldValue(el);
     case "boolean":
       return el.checked;
     case "integer":

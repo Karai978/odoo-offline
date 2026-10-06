@@ -9,6 +9,7 @@
 import { applyDynamicAttrs, resetDynamicAttrs } from "./dynamic_field_attrs.js";
 import { collectFormData } from "../../views/form/form_serializer.js";
 import { onchangeRegistry } from "./business_rules_registry.js";
+import { updateCharField } from "../../views/fields/char/char_field.js";
 
 /**
  * @returns {Function} Cleanup function to be called when the form is
@@ -22,7 +23,7 @@ export function attachLiveBusinessRules(archXmlString, containerEl, fieldsInfo) 
   const dynamicFieldNodes = Array.from(root.querySelectorAll("field")).filter((node) => {
     return ["readonly", "required"].some((key) => {
       const raw = node.getAttribute(key);
-      return raw && raw !== "1" && raw !== "True";
+      return raw && !["1", "True", "true"].includes(raw);
     });
   });
 
@@ -39,9 +40,11 @@ export function attachLiveBusinessRules(archXmlString, containerEl, fieldsInfo) 
       if (!wrapperEl) return;
 
       const info = fieldsInfo[fieldName];
-      const baseRequired = info ? !!info.required : false;
+      const requiredAttr = node.getAttribute("required");
+      const baseRequired = !!info?.required || requiredAttr === "1" || requiredAttr === "True" || requiredAttr === "true";
+      const baseReadonly = !!info?.readonly;
 
-      resetDynamicAttrs(wrapperEl, baseRequired);
+      resetDynamicAttrs(wrapperEl, baseRequired, baseReadonly);
       applyDynamicAttrs(node, wrapperEl, currentValues);
     });
   };
@@ -74,6 +77,13 @@ export function attachLiveOnchange(model, containerEl, fieldsInfo, helpers) {
       if (!rowEl) continue;
 
       const finfo = fieldsInfo[fieldName];
+      if (finfo?.type === "char") {
+        const charHost = rowEl.querySelector("[data-owl-char-field]");
+        if (charHost) {
+          updateCharField(charHost, { value });
+          continue;
+        }
+      }
       if (finfo && finfo.type === "many2one" && value && typeof value === "object") {
         // Many2one : deux inputs à synchroniser (texte affiché + id caché) —
         // même paire que celle posée par renderMany2oneField().

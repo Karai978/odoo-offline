@@ -13,6 +13,7 @@ import {
   renderProductCatalog,
 } from "../product_catalog/product_catalog.js";
 import { createFieldInput } from "../field.js";
+import { destroyCharFields } from "../char/char_field.js";
 import { notify } from "../../../core/notification_service.js";
 
 let one2manyRowCounter = 0;
@@ -398,6 +399,7 @@ export function renderOne2manyField(name, info, node, initialValue, parentValues
       });
 
       if (qty === 0 && existingTr) {
+        destroyCharFields(existingTr);
         existingTr.remove();
         return;
       }
@@ -505,6 +507,7 @@ export function renderOne2manyField(name, info, node, initialValue, parentValues
     removeBtn.className = "fa fa-trash-o";
     removeBtn.setAttribute("aria-label", "Supprimer la ligne");
     removeBtn.addEventListener("click", () => {
+      destroyCharFields(tr);
       tr.remove();
       recomputeTotal();
     });
